@@ -181,6 +181,7 @@ export async function startRunner(): Promise<void> {
       const agent = options.agent ?? 'claude';
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
+      const isCustomClaudeModel = agent === 'claude' && options.isCustomModel === true && Boolean(options.model);
       const worktreeName = options.worktreeName;
       let directoryCreated = false;
       let spawnDirectory = directory;
@@ -319,6 +320,13 @@ export async function startRunner(): Promise<void> {
             HAPI_WORKTREE_NAME: worktreeInfo.name,
             HAPI_WORKTREE_PATH: worktreeInfo.worktreePath,
             HAPI_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt)
+          };
+        }
+
+        if (isCustomClaudeModel && options.model) {
+          extraEnv = {
+            ...extraEnv,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: options.model
           };
         }
 

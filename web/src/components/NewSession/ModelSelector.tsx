@@ -5,8 +5,10 @@ import { useTranslation } from '@/lib/use-translation'
 export function ModelSelector(props: {
     agent: AgentType
     model: string
+    customModel: string
     isDisabled: boolean
     onModelChange: (value: string) => void
+    onCustomModelChange: (value: string) => void
 }) {
     const { t } = useTranslation()
     const options = MODEL_OPTIONS[props.agent]
@@ -32,6 +34,16 @@ export function ModelSelector(props: {
                     </option>
                 ))}
             </select>
+            {props.agent === 'claude' && props.model === 'custom' ? (
+                <input
+                    type="text"
+                    value={props.customModel}
+                    onChange={(e) => props.onCustomModelChange(e.target.value)}
+                    disabled={props.isDisabled}
+                    placeholder={t('newSession.model.custom.placeholder')}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                />
+            ) : null}
         </div>
     )
 }

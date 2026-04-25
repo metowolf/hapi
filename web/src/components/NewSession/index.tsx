@@ -21,6 +21,7 @@ import {
 } from './preferences'
 import { SessionTypeSelector } from './SessionTypeSelector'
 import { YoloToggle } from './YoloToggle'
+import { useTranslation } from '@/lib/use-translation'
 
 export function NewSession(props: {
     api: ApiClient
@@ -30,6 +31,7 @@ export function NewSession(props: {
     onCancel: () => void
 }) {
     const { haptic } = usePlatform()
+    const { t } = useTranslation()
     const { spawnSession, isPending, error: spawnError } = useSpawnSession(props.api)
     const { sessions } = useSessions(props.api)
     const isFormDisabled = Boolean(isPending || props.isLoading)
@@ -42,6 +44,7 @@ export function NewSession(props: {
     const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
     const [agent, setAgent] = useState<AgentType>(loadPreferredAgent)
     const [model, setModel] = useState('auto')
+    const [customModel, setCustomModel] = useState('')
     const [yoloMode, setYoloMode] = useState(loadPreferredYoloMode)
     const [sessionType, setSessionType] = useState<SessionType>('simple')
     const [worktreeName, setWorktreeName] = useState('')
@@ -56,6 +59,7 @@ export function NewSession(props: {
 
     useEffect(() => {
         setModel('auto')
+        setCustomModel('')
     }, [agent])
 
     useEffect(() => {
@@ -209,12 +213,22 @@ export function NewSession(props: {
 
         setError(null)
         try {
-            const resolvedModel = model !== 'auto' && agent !== 'opencode' ? model : undefined
+            const trimmedCustomModel = customModel.trim()
+            if (agent === 'claude' && model === 'custom' && !trimmedCustomModel) {
+                setError(t('newSession.model.custom.required'))
+                return
+            }
+            const resolvedModel = agent === 'claude' && model === 'custom'
+                ? trimmedCustomModel
+                : model !== 'auto' && agent !== 'opencode'
+                    ? model
+                    : undefined
             const result = await spawnSession({
                 machineId,
                 directory: directory.trim(),
                 agent,
                 model: resolvedModel,
+                isCustomModel: agent === 'claude' && model === 'custom',
                 yolo: yoloMode,
                 sessionType,
                 worktreeName: sessionType === 'worktree' ? (worktreeName.trim() || undefined) : undefined
@@ -276,8 +290,10 @@ export function NewSession(props: {
             <ModelSelector
                 agent={agent}
                 model={model}
+                customModel={customModel}
                 isDisabled={isFormDisabled}
                 onModelChange={setModel}
+                onCustomModelChange={setCustomModel}
             />
             <YoloToggle
                 yoloMode={yoloMode}

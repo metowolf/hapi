@@ -6,6 +6,7 @@ export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]
         { value: 'auto', label: 'Auto' },
         { value: 'opus', label: 'Opus' },
         { value: 'sonnet', label: 'Sonnet' },
+        { value: 'custom', label: 'Custom' },
     ],
     codex: [
         { value: 'auto', label: 'Auto' },

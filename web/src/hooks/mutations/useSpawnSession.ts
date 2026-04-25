@@ -8,6 +8,7 @@ type SpawnInput = {
     directory: string
     agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
     model?: string
+    isCustomModel?: boolean
     yolo?: boolean
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
@@ -30,6 +31,7 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.directory,
                 input.agent,
                 input.model,
+                input.isCustomModel,
                 input.yolo,
                 input.sessionType,
                 input.worktreeName

@@ -104,6 +104,8 @@ export default {
   'newSession.agent': 'Agent',
   'newSession.model': 'Model',
   'newSession.model.optional': 'optional',
+  'newSession.model.custom.placeholder': 'Enter Claude model name',
+  'newSession.model.custom.required': 'Custom model is required',
   'newSession.yolo': 'YOLO mode',
   'newSession.yolo.title': 'Bypass approvals and sandbox',
   'newSession.yolo.desc': 'Uses dangerous agent flags when spawning.',
