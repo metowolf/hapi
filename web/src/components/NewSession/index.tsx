@@ -286,7 +286,6 @@ export function NewSession(props: {
                 directory: trimmedDirectory,
                 agent,
                 model: resolvedModel,
-                isCustomModel: agent === 'claude' && model === 'custom',
                 effort: resolvedEffort,
                 modelReasoningEffort: resolvedModelReasoningEffort,
                 yolo: yoloMode,

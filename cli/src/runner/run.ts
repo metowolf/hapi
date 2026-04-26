@@ -24,6 +24,16 @@ import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { hashRunnerCliApiToken } from './runnerIdentity';
 
+const CLAUDE_BUILT_IN_MODEL_ALIASES = new Set(['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]']);
+
+export function shouldSetClaudeHaikuModelEnv(agent: string, model?: string): boolean {
+  if (agent !== 'claude') {
+    return false;
+  }
+  const normalizedModel = model?.trim();
+  return Boolean(normalizedModel && !CLAUDE_BUILT_IN_MODEL_ALIASES.has(normalizedModel));
+}
+
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
@@ -236,7 +246,6 @@ export async function startRunner(): Promise<void> {
       const agent = options.agent ?? 'claude';
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
-      const isCustomClaudeModel = agent === 'claude' && options.isCustomModel === true && Boolean(options.model);
       const worktreeName = options.worktreeName;
       let directoryCreated = false;
       let spawnDirectory = directory;
@@ -378,7 +387,7 @@ export async function startRunner(): Promise<void> {
           };
         }
 
-        if (isCustomClaudeModel && options.model) {
+        if (shouldSetClaudeHaikuModelEnv(agent, options.model) && options.model) {
           extraEnv = {
             ...extraEnv,
             ANTHROPIC_DEFAULT_HAIKU_MODEL: options.model
