@@ -1,4 +1,3 @@
-import type { ModelMode } from './modes'
 import type { Session, WorktreeMetadata } from './schemas'
 
 export type SessionSummaryMetadata = {
@@ -8,6 +7,7 @@ export type SessionSummaryMetadata = {
     summary?: { text: string }
     flavor?: string | null
     worktree?: WorktreeMetadata
+    agentSessionId?: string
 }
 
 export type SessionSummary = {
@@ -19,7 +19,8 @@ export type SessionSummary = {
     metadata: SessionSummaryMetadata | null
     todoProgress: { completed: number; total: number } | null
     pendingRequestsCount: number
-    modelMode?: ModelMode
+    model: string | null
+    effort: string | null
 }
 
 export function toSessionSummary(session: Session): SessionSummary {
@@ -31,7 +32,13 @@ export function toSessionSummary(session: Session): SessionSummary {
         machineId: session.metadata.machineId ?? undefined,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
-        worktree: session.metadata.worktree
+        worktree: session.metadata.worktree,
+        agentSessionId: session.metadata.codexSessionId
+            ?? session.metadata.claudeSessionId
+            ?? session.metadata.geminiSessionId
+            ?? session.metadata.opencodeSessionId
+            ?? session.metadata.cursorSessionId
+            ?? undefined
     } : null
 
     const todoProgress = session.todos?.length ? {
@@ -48,6 +55,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         metadata,
         todoProgress,
         pendingRequestsCount,
-        modelMode: session.modelMode
+        model: session.model,
+        effort: session.effort
     }
 }

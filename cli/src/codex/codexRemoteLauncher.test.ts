@@ -4,7 +4,12 @@ import type { EnhancedMode } from './loop';
 
 const harness = vi.hoisted(() => ({
     notifications: [] as Array<{ method: string; params: unknown }>,
-    registerRequestCalls: [] as string[]
+    registerRequestCalls: [] as string[],
+    initializeCalls: [] as unknown[],
+    startThreadIds: [] as string[],
+    resumeThreadIds: [] as string[],
+    startTurnThreadIds: [] as string[],
+    remainingThreadSystemErrors: 0
 }));
 
 vi.mock('./codexAppServerClient', () => {
@@ -13,7 +18,8 @@ vi.mock('./codexAppServerClient', () => {
 
         async connect(): Promise<void> {}
 
-        async initialize(): Promise<{ protocolVersion: number }> {
+        async initialize(params: unknown): Promise<{ protocolVersion: number }> {
+            harness.initializeCalls.push(params);
             return { protocolVersion: 1 };
         }
 
@@ -25,24 +31,42 @@ vi.mock('./codexAppServerClient', () => {
             harness.registerRequestCalls.push(method);
         }
 
-        async startThread(): Promise<{ thread: { id: string } }> {
-            return { thread: { id: 'thread-anonymous' } };
+        async startThread(): Promise<{ thread: { id: string }; model: string }> {
+            const id = `thread-${harness.startThreadIds.length + 1}`;
+            harness.startThreadIds.push(id);
+            return { thread: { id }, model: 'gpt-5.4' };
         }
 
-        async resumeThread(): Promise<{ thread: { id: string } }> {
-            return { thread: { id: 'thread-anonymous' } };
+        async resumeThread(params?: { threadId?: string }): Promise<{ thread: { id: string }; model: string }> {
+            const id = params?.threadId ?? 'thread-resumed';
+            harness.resumeThreadIds.push(id);
+            return { thread: { id }, model: 'gpt-5.4' };
         }
 
-        async startTurn(): Promise<{ turn: Record<string, never> }> {
-            const started = { turn: {} };
+        async startTurn(params?: { threadId?: string }): Promise<{ turn: { id?: string } }> {
+            const threadId = params?.threadId ?? 'thread-unknown';
+            harness.startTurnThreadIds.push(threadId);
+            const turnId = `turn-${harness.startTurnThreadIds.length}`;
+            const started = { turn: { id: turnId } };
             harness.notifications.push({ method: 'turn/started', params: started });
             this.notificationHandler?.('turn/started', started);
 
-            const completed = { status: 'Completed', turn: {} };
+            if (harness.remainingThreadSystemErrors > 0) {
+                harness.remainingThreadSystemErrors -= 1;
+                const failed = {
+                    thread: { id: threadId },
+                    status: { type: 'systemError' }
+                };
+                harness.notifications.push({ method: 'thread/status/changed', params: failed });
+                this.notificationHandler?.('thread/status/changed', failed);
+                return { turn: { id: turnId } };
+            }
+
+            const completed = { status: 'Completed', turn: { id: turnId } };
             harness.notifications.push({ method: 'turn/completed', params: completed });
             this.notificationHandler?.('turn/completed', completed);
 
-            return { turn: {} };
+            return { turn: { id: turnId } };
         }
 
         async interruptTurn(): Promise<Record<string, never>> {
@@ -73,19 +97,27 @@ type FakeAgentState = {
 
 function createMode(): EnhancedMode {
     return {
-        permissionMode: 'default'
+        permissionMode: 'default',
+        collaborationMode: 'default'
     };
 }
 
-function createSessionStub() {
+function createSessionStub(messages = ['hello from launcher test']) {
     const queue = new MessageQueue2<EnhancedMode>((mode) => JSON.stringify(mode));
-    queue.push('hello from launcher test', createMode());
+    messages.forEach((message, index) => {
+        if (index === 0 && messages.length > 1) {
+            queue.pushIsolateAndClear(message, createMode());
+        } else {
+            queue.push(message, createMode());
+        }
+    });
     queue.close();
 
     const sessionEvents: Array<{ type: string; [key: string]: unknown }> = [];
     const codexMessages: unknown[] = [];
     const thinkingChanges: boolean[] = [];
     const foundSessionIds: string[] = [];
+    let currentModel: string | null | undefined;
     let agentState: FakeAgentState = {
         requests: {},
         completedRequests: {}
@@ -101,7 +133,7 @@ function createSessionStub() {
         updateAgentState(handler: (state: FakeAgentState) => FakeAgentState) {
             agentState = handler(agentState);
         },
-        sendCodexMessage(message: unknown) {
+        sendAgentMessage(message: unknown) {
             codexMessages.push(message);
         },
         sendUserMessage(_text: string) {},
@@ -119,6 +151,15 @@ function createSessionStub() {
         codexCliOverrides: undefined,
         sessionId: null as string | null,
         thinking: false,
+        getPermissionMode() {
+            return 'default' as const;
+        },
+        setModel(nextModel: string | null) {
+            currentModel = nextModel;
+        },
+        getModel() {
+            return currentModel;
+        },
         onThinkingChange(nextThinking: boolean) {
             session.thinking = nextThinking;
             thinkingChanges.push(nextThinking);
@@ -127,8 +168,8 @@ function createSessionStub() {
             session.sessionId = id;
             foundSessionIds.push(id);
         },
-        sendCodexMessage(message: unknown) {
-            client.sendCodexMessage(message);
+        sendAgentMessage(message: unknown) {
+            client.sendAgentMessage(message);
         },
         sendSessionEvent(event: { type: string; [key: string]: unknown }) {
             client.sendSessionEvent(event);
@@ -145,6 +186,7 @@ function createSessionStub() {
         thinkingChanges,
         foundSessionIds,
         rpcHandlers,
+        getModel: () => currentModel,
         getAgentState: () => agentState
     };
 }
@@ -153,25 +195,69 @@ describe('codexRemoteLauncher', () => {
     afterEach(() => {
         harness.notifications = [];
         harness.registerRequestCalls = [];
-        delete process.env.CODEX_USE_MCP_SERVER;
+        harness.initializeCalls = [];
+        harness.startThreadIds = [];
+        harness.resumeThreadIds = [];
+        harness.startTurnThreadIds = [];
+        harness.remainingThreadSystemErrors = 0;
     });
 
-    it('finishes a turn and emits ready when task lifecycle events omit turn_id', async () => {
-        delete process.env.CODEX_USE_MCP_SERVER;
+    it('finishes a turn and emits ready when task lifecycle events include turn_id', async () => {
         const {
             session,
             sessionEvents,
             thinkingChanges,
-            foundSessionIds
+            foundSessionIds,
+            getModel
         } = createSessionStub();
 
         const exitReason = await codexRemoteLauncher(session as never);
 
         expect(exitReason).toBe('exit');
-        expect(foundSessionIds).toContain('thread-anonymous');
+        expect(foundSessionIds).toContain('thread-1');
+        expect(getModel()).toBe('gpt-5.4');
+        expect(harness.initializeCalls).toEqual([{
+            clientInfo: {
+                name: 'hapi-codex-client',
+                version: '1.0.0'
+            },
+            capabilities: {
+                experimentalApi: true
+            }
+        }]);
         expect(harness.notifications.map((entry) => entry.method)).toEqual(['turn/started', 'turn/completed']);
         expect(sessionEvents.filter((event) => event.type === 'ready').length).toBeGreaterThanOrEqual(1);
         expect(thinkingChanges).toContain(true);
+        expect(session.thinking).toBe(false);
+    });
+
+    it('surfaces thread-level systemError as a visible failure and emits ready', async () => {
+        harness.remainingThreadSystemErrors = 1;
+        const { session, sessionEvents } = createSessionStub();
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.notifications.map((entry) => entry.method)).toEqual(['turn/started', 'thread/status/changed']);
+        expect(sessionEvents).toContainEqual({
+            type: 'message',
+            message: 'Task failed: Codex thread entered systemError'
+        });
+        expect(sessionEvents.filter((event) => event.type === 'ready').length).toBeGreaterThanOrEqual(1);
+        expect(session.thinking).toBe(false);
+    });
+
+    it('starts a fresh thread for the next queued message after thread-level systemError', async () => {
+        harness.remainingThreadSystemErrors = 1;
+        const { session } = createSessionStub(['first message', 'second message']);
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.startThreadIds).toEqual(['thread-1', 'thread-2']);
+        expect(harness.resumeThreadIds).toEqual([]);
+        expect(harness.startTurnThreadIds).toEqual(['thread-1', 'thread-2']);
+        expect(session.sessionId).toBe('thread-2');
         expect(session.thinking).toBe(false);
     });
 });

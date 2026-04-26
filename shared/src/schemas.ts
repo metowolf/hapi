@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { MODEL_MODES, PERMISSION_MODES } from './modes'
+import { CODEX_COLLABORATION_MODES, PERMISSION_MODES } from './modes'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
-export const ModelModeSchema = z.enum(MODEL_MODES)
+export const CodexCollaborationModeSchema = z.enum(CODEX_COLLABORATION_MODES)
 
 const MetadataSummarySchema = z.object({
     text: z.string(),
@@ -31,6 +31,7 @@ export const MetadataSchema = z.object({
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),
     opencodeSessionId: z.string().optional(),
+    cursorSessionId: z.string().optional(),
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
     homeDir: z.string().optional(),
@@ -89,13 +90,53 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 export const TodoItemSchema = z.object({
     content: z.string(),
     status: z.enum(['pending', 'in_progress', 'completed']),
-    priority: z.enum(['high', 'medium', 'low']),
-    id: z.string()
+    priority: z.enum(['high', 'medium', 'low']).optional().default('medium'),
+    id: z.string().optional().default(''),
+    activeForm: z.string().optional()
 })
 
 export type TodoItem = z.infer<typeof TodoItemSchema>
 
 export const TodosSchema = z.array(TodoItemSchema)
+
+export const TeamMemberSchema = z.object({
+    name: z.string(),
+    agentType: z.string().optional(),
+    status: z.enum(['active', 'idle', 'shutdown']).optional()
+})
+
+export type TeamMember = z.infer<typeof TeamMemberSchema>
+
+export const TeamTaskSchema = z.object({
+    id: z.string(),
+    title: z.string(),
+    description: z.string().optional(),
+    status: z.enum(['pending', 'in_progress', 'completed', 'blocked']).optional(),
+    owner: z.string().optional()
+})
+
+export type TeamTask = z.infer<typeof TeamTaskSchema>
+
+export const TeamMessageSchema = z.object({
+    from: z.string(),
+    to: z.string(),
+    summary: z.string(),
+    type: z.enum(['message', 'broadcast', 'shutdown_request', 'shutdown_response']),
+    timestamp: z.number()
+})
+
+export type TeamMessage = z.infer<typeof TeamMessageSchema>
+
+export const TeamStateSchema = z.object({
+    teamName: z.string(),
+    description: z.string().optional(),
+    members: z.array(TeamMemberSchema).optional(),
+    tasks: z.array(TeamTaskSchema).optional(),
+    messages: z.array(TeamMessageSchema).optional(),
+    updatedAt: z.number().optional()
+})
+
+export type TeamState = z.infer<typeof TeamStateSchema>
 
 export const AttachmentMetadataSchema = z.object({
     id: z.string(),
@@ -132,9 +173,14 @@ export const SessionSchema = z.object({
     agentStateVersion: z.number(),
     thinking: z.boolean(),
     thinkingAt: z.number(),
+    backgroundTaskCount: z.number().optional(),
     todos: TodosSchema.optional(),
+    teamState: TeamStateSchema.optional(),
+    model: z.string().nullable().optional().default(null),
+    modelReasoningEffort: z.string().nullable().optional().default(null),
+    effort: z.string().nullable().optional().default(null),
     permissionMode: PermissionModeSchema.optional(),
-    modelMode: ModelModeSchema.optional()
+    collaborationMode: CodexCollaborationModeSchema.optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
@@ -168,6 +214,13 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         type: z.literal('message-received'),
         message: DecryptedMessageSchema
     }),
+    SessionChangedSchema.extend({
+        type: z.literal('messages-invalidated')
+    }),
+    SessionChangedSchema.extend({
+        type: z.literal('session-ended'),
+        reason: z.enum(['completed', 'terminated', 'error']).optional()
+    }),
     MachineChangedSchema.extend({
         type: z.literal('machine-updated'),
         data: z.unknown().optional()
@@ -180,6 +233,16 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             sessionId: z.string(),
             url: z.string()
         })
+    }),
+    SessionChangedSchema.extend({
+        type: z.literal('messages-consumed'),
+        localIds: z.array(z.string())
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('heartbeat'),
+        data: z.object({
+            timestamp: z.number()
+        }).optional()
     }),
     SessionEventBaseSchema.extend({
         type: z.literal('connection-changed'),

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -19,6 +19,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -30,6 +31,8 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
+import type { Machine } from '@/types/api'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
@@ -94,6 +97,12 @@ function SettingsIcon(props: { className?: string }) {
     )
 }
 
+function getMachineTitle(machine: Machine): string {
+    if (machine.metadata?.displayName) return machine.metadata.displayName
+    if (machine.metadata?.host) return machine.metadata.host
+    return machine.id.slice(0, 8)
+}
+
 function SessionsPage() {
     const { api } = useAppContext()
     const navigate = useNavigate()
@@ -101,20 +110,32 @@ function SessionsPage() {
     const matchRoute = useMatchRoute()
     const { t } = useTranslation()
     const { sessions, isLoading, error, refetch } = useSessions(api)
+    const { machines } = useMachines(api, true)
 
     const handleRefresh = useCallback(() => {
         void refetch()
     }, [refetch])
 
-    const projectCount = new Set(sessions.map(s => s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other')).size
+    const projectCount = useMemo(() => new Set(sessions.map(s =>
+        s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other'
+    )).size, [sessions])
+    const machineLabelsById = useMemo(() => {
+        const labels: Record<string, string> = {}
+        for (const machine of machines) {
+            labels[machine.id] = getMachineTitle(machine)
+        }
+        return labels
+    }, [machines])
     const sessionMatch = matchRoute({ to: '/sessions/$sessionId', fuzzy: true })
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
+    const sidebar = useSidebarResize()
 
     return (
         <div className="flex h-full min-h-0">
             <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[420px] xl:w-[480px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}
+                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
+                style={{ '--sidebar-w': `${sidebar.width}px` } as React.CSSProperties}
             >
                 <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
@@ -142,7 +163,7 @@ function SessionsPage() {
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
+                <div className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -160,9 +181,17 @@ function SessionsPage() {
                         isLoading={isLoading}
                         renderHeader={false}
                         api={api}
+                        machineLabelsById={machineLabelsById}
                     />
                 </div>
             </div>
+
+            {/* Resize handle - desktop only */}
+            <div
+                className="sidebar-resize-handle hidden lg:block shrink-0"
+                data-dragging={sidebar.isDragging || undefined}
+                onPointerDown={sidebar.onPointerDown}
+            />
 
             <div className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
                 <div className="flex-1 min-h-0">
@@ -207,6 +236,10 @@ function SessionPage() {
         retryMessage,
         isSending,
     } = useSendMessage(api, sessionId, {
+        isSessionThinking: session?.thinking ?? false,
+        onSuccess: (sentSessionId) => {
+            clearDraftsAfterSend(sentSessionId, sessionId)
+        },
         resolveSessionId: async (currentSessionId) => {
             if (!api || !session || session.active) {
                 return currentSessionId
@@ -267,6 +300,7 @@ function SessionPage() {
     // Get agent type from session metadata for slash commands
     const agentType = session?.metadata?.flavor ?? 'claude'
     const {
+        commands: slashCommands,
         getSuggestions: getSlashSuggestions,
     } = useSlashCommands(api, sessionId, agentType)
     const {
@@ -313,6 +347,7 @@ function SessionPage() {
             onAtBottomChange={setAtBottom}
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
+            availableSlashCommands={slashCommands}
         />
     )
 }
@@ -332,6 +367,7 @@ function NewSessionPage() {
     const goBack = useAppGoBack()
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true)
+    const { t } = useTranslation()
 
     const handleCancel = useCallback(() => {
         navigate({ to: '/sessions' })
@@ -351,7 +387,7 @@ function NewSessionPage() {
     }, [navigate, queryClient])
 
     return (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
                     <button
@@ -362,22 +398,27 @@ function NewSessionPage() {
                         <BackIcon />
                     </button>
                 )}
-                <div className="flex-1 font-semibold">Create Session</div>
+                <div className="flex-1 font-semibold">{t('newSession.title')}</div>
             </div>
 
-            {machinesError ? (
-                <div className="p-3 text-sm text-red-600">
-                    {machinesError}
-                </div>
-            ) : null}
+            <div
+                className="app-scroll-y flex-1 min-h-0"
+                style={{ paddingBottom: 'calc(var(--app-floating-bottom-offset, 0px) + env(safe-area-inset-bottom))' }}
+            >
+                {machinesError ? (
+                    <div className="p-3 text-sm text-red-600">
+                        {machinesError}
+                    </div>
+                ) : null}
 
-            <NewSession
-                api={api}
-                machines={machines}
-                isLoading={machinesLoading}
-                onCancel={handleCancel}
-                onSuccess={handleSuccess}
-            />
+                <NewSession
+                    api={api}
+                    machines={machines}
+                    isLoading={machinesLoading}
+                    onCancel={handleCancel}
+                    onSuccess={handleSuccess}
+                />
+            </div>
         </div>
     )
 }

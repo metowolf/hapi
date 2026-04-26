@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session } from '@/types/api'
+import type {
+    AttachmentMetadata,
+    CodexCollaborationMode,
+    DecryptedMessage,
+    PermissionMode,
+    Session,
+    SlashCommand
+} from '@/types/api'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
@@ -12,11 +19,17 @@ import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
+import { findUnsupportedCodexBuiltinSlashCommand } from '@/lib/codexSlashCommands'
+import { useToast } from '@/lib/toast-context'
+import { useTranslation } from '@/lib/use-translation'
 import { SessionHeader } from '@/components/SessionHeader'
+import { TeamPanel } from '@/components/TeamPanel'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useCodexModels } from '@/hooks/queries/useCodexModels'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
+import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 
 export function SessionChat(props: {
     api: ApiClient
@@ -37,18 +50,52 @@ export function SessionChat(props: {
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
+    availableSlashCommands?: readonly SlashCommand[]
 }) {
     const { haptic } = usePlatform()
+    const { addToast } = useToast()
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const sessionInactive = !props.session.active
+    const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
-    const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
+    const controlledByUser = props.session.agentState?.controlledByUser === true
+    const codexCollaborationModeSupported = agentFlavor === 'codex' && !controlledByUser
+    const codexModelsState = useCodexModels({
+        api: props.api,
+        sessionId: props.session.id,
+        enabled: agentFlavor === 'codex' && props.session.active && !controlledByUser
+    })
+    const codexModelOptions = useMemo(() => {
+        if (agentFlavor !== 'codex') {
+            return undefined
+        }
+
+        const options: Array<{ value: string | null; label: string }> = []
+        for (const codexModel of codexModelsState.models) {
+            options.push({
+                value: codexModel.id,
+                label: codexModel.displayName
+            })
+        }
+        return options
+    }, [agentFlavor, codexModelsState.models])
+    const {
+        abortSession,
+        switchSession,
+        setPermissionMode,
+        setCollaborationMode,
+        setModel,
+        setModelReasoningEffort,
+        setEffort
+    } = useSessionActions(
         props.api,
         props.session.id,
-        agentFlavor
+        agentFlavor,
+        codexCollaborationModeSupported
     )
 
     // Voice assistant integration
@@ -204,17 +251,50 @@ export function SessionChat(props: {
         }
     }, [setPermissionMode, props.onRefresh, haptic])
 
-    // Model mode change handler
-    const handleModelModeChange = useCallback(async (mode: ModelMode) => {
+    const handleCollaborationModeChange = useCallback(async (mode: CodexCollaborationMode) => {
         try {
-            await setModelMode(mode)
+            await setCollaborationMode(mode)
             haptic.notification('success')
             props.onRefresh()
         } catch (e) {
             haptic.notification('error')
-            console.error('Failed to set model mode:', e)
+            console.error('Failed to set collaboration mode:', e)
         }
-    }, [setModelMode, props.onRefresh, haptic])
+    }, [setCollaborationMode, props.onRefresh, haptic])
+
+    // Model mode change handler
+    const handleModelChange = useCallback(async (model: string | null) => {
+        try {
+            await setModel(model)
+            haptic.notification('success')
+            props.onRefresh()
+        } catch (e) {
+            haptic.notification('error')
+            console.error('Failed to set model:', e)
+        }
+    }, [setModel, props.onRefresh, haptic])
+
+    const handleModelReasoningEffortChange = useCallback(async (modelReasoningEffort: string | null) => {
+        try {
+            await setModelReasoningEffort(modelReasoningEffort)
+            haptic.notification('success')
+            props.onRefresh()
+        } catch (e) {
+            haptic.notification('error')
+            console.error('Failed to set model reasoning effort:', e)
+        }
+    }, [setModelReasoningEffort, props.onRefresh, haptic])
+
+    const handleEffortChange = useCallback(async (effort: string | null) => {
+        try {
+            await setEffort(effort)
+            haptic.notification('success')
+            props.onRefresh()
+        } catch (e) {
+            haptic.notification('error')
+            console.error('Failed to set effort:', e)
+        }
+    }, [setEffort, props.onRefresh, haptic])
 
     // Abort handler
     const handleAbort = useCallback(async () => {
@@ -243,9 +323,26 @@ export function SessionChat(props: {
     }, [navigate, props.session.id])
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
+        if (agentFlavor === 'codex') {
+            const unsupportedCommand = findUnsupportedCodexBuiltinSlashCommand(
+                text,
+                props.availableSlashCommands ?? []
+            )
+            if (unsupportedCommand) {
+                haptic.notification('error')
+                addToast({
+                    title: t('composer.codexSlashUnsupported.title'),
+                    body: t('composer.codexSlashUnsupported.body', { command: `/${unsupportedCommand}` }),
+                    sessionId: props.session.id,
+                    url: `/sessions/${props.session.id}`
+                })
+                return
+            }
+        }
+
         props.onSend(text, attachments)
         setForceScrollToken((token) => token + 1)
-    }, [props.onSend])
+    }, [agentFlavor, props.availableSlashCommands, props.onSend, props.session.id, addToast, haptic, t])
 
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {
@@ -265,7 +362,7 @@ export function SessionChat(props: {
     })
 
     return (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full min-h-0 flex-col">
             <SessionHeader
                 session={props.session}
                 onBack={props.onBack}
@@ -273,6 +370,10 @@ export function SessionChat(props: {
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
+
+            {props.session.teamState && (
+                <TeamPanel teamState={props.session.teamState} />
+            )}
 
             {sessionInactive ? (
                 <div className="px-3 pt-3">
@@ -306,21 +407,52 @@ export function SessionChat(props: {
                         forceScrollToken={forceScrollToken}
                     />
 
+                    {codexCollaborationModeSupported && codexModelsState.error ? (
+                        <div className="px-3 pb-2">
+                            <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
+                                {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
+                            </div>
+                        </div>
+                    ) : null}
+
                     <HappyComposer
+                        key={props.session.id}
+                        sessionId={props.session.id}
                         disabled={props.isSending}
                         permissionMode={props.session.permissionMode}
-                        modelMode={props.session.modelMode}
+                        collaborationMode={codexCollaborationModeSupported ? props.session.collaborationMode : undefined}
+                        model={props.session.model}
+                        modelReasoningEffort={agentFlavor === 'codex' ? props.session.modelReasoningEffort : undefined}
+                        effort={props.session.effort}
                         agentFlavor={agentFlavor}
+                        availableModelOptions={agentFlavor === 'codex' ? codexModelOptions : undefined}
                         active={props.session.active}
                         allowSendWhenInactive
                         thinking={props.session.thinking}
                         agentState={props.session.agentState}
+                        backgroundTaskCount={props.session.backgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
-                        controlledByUser={props.session.agentState?.controlledByUser === true}
+                        controlledByUser={controlledByUser}
+                        onCollaborationModeChange={
+                            codexCollaborationModeSupported && props.session.active && !controlledByUser
+                                ? handleCollaborationModeChange
+                                : undefined
+                        }
                         onPermissionModeChange={handlePermissionModeChange}
-                        onModelModeChange={handleModelModeChange}
+                        onModelChange={
+                            agentFlavor === 'codex'
+                                ? (props.session.active && !controlledByUser && !codexModelsState.error ? handleModelChange : undefined)
+                                : handleModelChange
+                        }
+                        onModelReasoningEffortChange={
+                            agentFlavor === 'codex' && props.session.active && !controlledByUser
+                                ? handleModelReasoningEffortChange
+                                : undefined
+                        }
+                        onEffortChange={handleEffortChange}
                         onSwitchToRemote={handleSwitchToRemote}
-                        onTerminal={props.session.active ? handleViewTerminal : undefined}
+                        onTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
+                        terminalUnsupported={props.session.active && !terminalSupported}
                         autocompleteSuggestions={props.autocompleteSuggestions}
                         voiceStatus={voice?.status}
                         voiceMicMuted={voice?.micMuted}

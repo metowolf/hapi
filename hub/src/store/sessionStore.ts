@@ -8,7 +8,12 @@ import {
     getSessionByNamespace,
     getSessions,
     getSessionsByNamespace,
+    setSessionEffort,
+    setSessionModel,
+    setSessionModelReasoningEffort,
+    setSessionTeamState,
     setSessionTodos,
+    touchSessionUpdatedAt,
     updateSessionAgentState,
     updateSessionMetadata
 } from './sessions'
@@ -20,8 +25,16 @@ export class SessionStore {
         this.db = db
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): StoredSession {
-        return getOrCreateSession(this.db, tag, metadata, agentState, namespace)
+    getOrCreateSession(
+        tag: string,
+        metadata: unknown,
+        agentState: unknown,
+        namespace: string,
+        model?: string,
+        effort?: string,
+        modelReasoningEffort?: string
+    ): StoredSession {
+        return getOrCreateSession(this.db, tag, metadata, agentState, namespace, model, effort, modelReasoningEffort)
     }
 
     updateSessionMetadata(
@@ -45,6 +58,31 @@ export class SessionStore {
 
     setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): boolean {
         return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace)
+    }
+
+    setSessionTeamState(id: string, teamState: unknown, updatedAt: number, namespace: string): boolean {
+        return setSessionTeamState(this.db, id, teamState, updatedAt, namespace)
+    }
+
+    setSessionModel(id: string, model: string | null, namespace: string, options?: { touchUpdatedAt?: boolean }): boolean {
+        return setSessionModel(this.db, id, model, namespace, options)
+    }
+
+    setSessionModelReasoningEffort(
+        id: string,
+        modelReasoningEffort: string | null,
+        namespace: string,
+        options?: { touchUpdatedAt?: boolean }
+    ): boolean {
+        return setSessionModelReasoningEffort(this.db, id, modelReasoningEffort, namespace, options)
+    }
+
+    setSessionEffort(id: string, effort: string | null, namespace: string, options?: { touchUpdatedAt?: boolean }): boolean {
+        return setSessionEffort(this.db, id, effort, namespace, options)
+    }
+
+    touchSessionUpdatedAt(id: string, updatedAt: number, namespace: string): boolean {
+        return touchSessionUpdatedAt(this.db, id, updatedAt, namespace)
     }
 
     getSession(id: string): StoredSession | null {

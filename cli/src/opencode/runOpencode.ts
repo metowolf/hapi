@@ -12,6 +12,7 @@ import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { startOpencodeHookServer } from './utils/startOpencodeHookServer';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { getInvokedCwd } from '@/utils/invokedCwd';
 
 export async function runOpencode(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -19,7 +20,7 @@ export async function runOpencode(opts: {
     permissionMode?: PermissionMode;
     resumeSessionId?: string;
 } = {}): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = getInvokedCwd();
     const startedBy = opts.startedBy ?? 'terminal';
 
     logger.debug(`[opencode] Starting with options: startedBy=${startedBy}, startingMode=${opts.startingMode}`);
@@ -83,12 +84,12 @@ export async function runOpencode(opts: {
         logger.debug(`[opencode] Synced session permission mode for keepalive: ${currentPermissionMode}`);
     };
 
-    session.onUserMessage((message) => {
+    session.onUserMessage((message, localId) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
         const mode: OpencodeMode = {
             permissionMode: currentPermissionMode
         };
-        messageQueue.push(formattedText, mode);
+        messageQueue.push(formattedText, mode, localId);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {
@@ -113,6 +114,8 @@ export async function runOpencode(opts: {
         return { applied: { permissionMode: currentPermissionMode } };
     });
 
+    let crashed = false;
+
     try {
         await opencodeLoop({
             path: workingDirectory,
@@ -132,6 +135,7 @@ export async function runOpencode(opts: {
             }
         });
     } catch (error) {
+        crashed = true;
         lifecycle.markCrash(error);
         logger.debug('[opencode] Loop error:', error);
     } finally {
@@ -139,6 +143,9 @@ export async function runOpencode(opts: {
         if (localFailure?.exitReason === 'exit') {
             lifecycle.setExitCode(1);
             lifecycle.setArchiveReason(`Local launch failed: ${localFailure.message.slice(0, 200)}`);
+            lifecycle.setSessionEndReason('error');
+        } else if (!crashed) {
+            lifecycle.setSessionEndReason('completed');
         }
         await lifecycle.cleanupAndExit();
     }

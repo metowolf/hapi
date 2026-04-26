@@ -1,11 +1,15 @@
 import type { ClientToServerEvents } from '@hapi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
+import { extractTeamStateFromMessageContent, applyTeamStateDelta } from '../../../sync/teams'
+import { extractBackgroundTaskDelta } from '../../../sync/backgroundTasks'
+import { shouldRecordSessionActivity } from '../../../sync/sessionActivity'
 import type { CliSocketWithData } from '../../socketTypes'
+import type { SessionEndReason } from '@hapi/protocol'
 import type { AccessErrorReason, AccessResult } from './types'
 
 type SessionAlivePayload = {
@@ -14,12 +18,16 @@ type SessionAlivePayload = {
     thinking?: boolean
     mode?: 'local' | 'remote'
     permissionMode?: PermissionMode
-    modelMode?: ModelMode
+    model?: string | null
+    modelReasoningEffort?: string | null
+    effort?: string | null
+    collaborationMode?: CodexCollaborationMode
 }
 
 type SessionEndPayload = {
     sid: string
     time: number
+    reason?: SessionEndReason
 }
 
 type ResolveSessionAccess = (sessionId: string) => AccessResult<StoredSession>
@@ -54,10 +62,12 @@ export type SessionHandlersDeps = {
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
     onWebappEvent?: (event: SyncEvent) => void
+    onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
+    onSessionActivity?: (sessionId: string, updatedAt: number) => void
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent } = deps
+    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent, onBackgroundTaskDelta, onSessionActivity } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -86,6 +96,9 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const session = sessionAccess.value
 
         const msg = store.messages.addMessage(sid, content, localId)
+        if (shouldRecordSessionActivity(content)) {
+            onSessionActivity?.(sid, msg.createdAt)
+        }
 
         const todos = extractTodoWriteTodosFromMessageContent(content)
         if (todos) {
@@ -93,6 +106,22 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             if (updated) {
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
             }
+        }
+
+        const teamDelta = extractTeamStateFromMessageContent(content)
+        if (teamDelta) {
+            const existingSession = store.sessions.getSession(sid)
+            const existingTeamState = existingSession?.teamState as import('@hapi/protocol/types').TeamState | null | undefined
+            const newTeamState = applyTeamStateDelta(existingTeamState ?? null, teamDelta)
+            const updated = store.sessions.setSessionTeamState(sid, newTeamState, msg.createdAt, session.namespace)
+            if (updated) {
+                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+            }
+        }
+
+        const bgDelta = extractBackgroundTaskDelta(content)
+        if (bgDelta) {
+            onBackgroundTaskDelta?.(sid, bgDelta)
         }
 
         const update = {
@@ -230,6 +259,22 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             return
         }
         onSessionAlive?.(data)
+    })
+
+    socket.on('messages-consumed', (data: { sid: string; localIds: string[] }) => {
+        if (!data || typeof data.sid !== 'string' || !Array.isArray(data.localIds)) {
+            return
+        }
+        const localIds = data.localIds.filter((id): id is string => typeof id === 'string')
+        if (localIds.length === 0) {
+            return
+        }
+        const sessionAccess = resolveSessionAccess(data.sid)
+        if (!sessionAccess.ok) {
+            emitAccessError('session', data.sid, sessionAccess.reason)
+            return
+        }
+        onWebappEvent?.({ type: 'messages-consumed', sessionId: data.sid, localIds })
     })
 
     socket.on('session-end', (data: SessionEndPayload) => {

@@ -4,10 +4,13 @@ export interface SpawnSessionOptions {
     sessionId?: string
     resumeSessionId?: string
     approvedNewDirectoryCreation?: boolean
-    agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    agent?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
     model?: string
     isCustomModel?: boolean
+    effort?: string
+    modelReasoningEffort?: string
     yolo?: boolean
+    permissionMode?: string
     token?: string
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string

@@ -1,14 +1,12 @@
 import type { InfiniteData } from '@tanstack/react-query'
 import type { DecryptedMessage, MessagesResponse } from '@/types/api'
+import { randomId } from '@/lib/randomId'
 
 export function makeClientSideId(prefix: string): string {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-        return `${prefix}-${crypto.randomUUID()}`
-    }
-    return `${prefix}-${Date.now()}-${Math.random()}`
+    return `${prefix}-${randomId()}`
 }
 
-function isUserMessage(msg: DecryptedMessage): boolean {
+export function isUserMessage(msg: DecryptedMessage): boolean {
     const content = msg.content
     if (content && typeof content === 'object' && 'role' in content) {
         return (content as { role: string }).role === 'user'
@@ -60,13 +58,28 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
     }
 
     // If we received stored messages with a localId, drop any optimistic bubbles with the same localId.
+    // Preserve client-side status (e.g. 'queued') on the replacing server message.
     if (incomingStoredLocalIds.size > 0) {
+        const optimisticStatusByLocalId = new Map<string, DecryptedMessage['status']>()
+        for (const msg of merged) {
+            if (msg.localId && isOptimisticMessage(msg) && incomingStoredLocalIds.has(msg.localId) && msg.status) {
+                optimisticStatusByLocalId.set(msg.localId, msg.status)
+            }
+        }
         merged = merged.filter((msg) => {
             if (!msg.localId || !incomingStoredLocalIds.has(msg.localId)) {
                 return true
             }
             return !isOptimisticMessage(msg)
         })
+        if (optimisticStatusByLocalId.size > 0) {
+            merged = merged.map((msg) => {
+                if (msg.localId && optimisticStatusByLocalId.has(msg.localId) && !msg.status) {
+                    return { ...msg, status: optimisticStatusByLocalId.get(msg.localId) }
+                }
+                return msg
+            })
+        }
     }
 
     // Fallback: if an optimistic message was marked as sent but we didn't get a localId echo,

@@ -9,6 +9,8 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
+import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
+import type { SessionEndReason } from '@hapi/protocol'
 import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hapi/protocol'
 import {
     TerminalClosePayloadSchema,
@@ -21,8 +23,9 @@ import type {
     MessageContent,
     MessageMeta,
     Metadata,
+    SessionCollaborationMode,
     Session,
-    SessionModelMode,
+    SessionModel,
     SessionPermissionMode,
     UserMessage
 } from './types'
@@ -32,6 +35,41 @@ import { registerCommonHandlers } from '../modules/common/registerCommonHandlers
 import { cleanupUploadDir } from '../modules/common/handlers/uploads'
 import { TerminalManager } from '@/terminal/TerminalManager'
 import { applyVersionedAck } from './versionedUpdate'
+import { buildHubRequestHeaders, buildSocketIoExtraHeaderOptions } from './hubExtraHeaders'
+
+/**
+ * XML tags that Claude Code injects as `type:'user'` messages.
+ * These are internal bookkeeping, not text the human actually typed.
+ */
+const SYSTEM_INJECTION_PREFIXES = [
+    '<task-notification>',
+    '<command-name>',
+    '<local-command-caveat>',
+    '<system-reminder>',
+]
+
+/**
+ * Returns true if a JSONL message should be classified as a user-role message
+ * (i.e., text typed by a real human) rather than an agent-role message.
+ *
+ * Claude Code injects system messages (task notifications, command caveats, …)
+ * into the JSONL log as `type:'user'` entries so the model sees them in
+ * context.  All metadata fields (`userType`, `isMeta`, …) are identical to
+ * genuine user messages, so the only reliable signal is the message content
+ * itself: injected messages always start with a well-known XML tag.
+ */
+export function isExternalUserMessage(body: RawJSONLines): body is Extract<RawJSONLines, { type: 'user' }> & { message: { content: string } } {
+    if (body.type !== 'user') return false
+    if (typeof body.message.content !== 'string') return false
+    if (body.isSidechain === true) return false
+    if (body.isMeta === true) return false
+
+    const trimmed = body.message.content.trimStart()
+    for (const prefix of SYSTEM_INJECTION_PREFIXES) {
+        if (trimmed.startsWith(prefix)) return false
+    }
+    return true
+}
 
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
@@ -41,8 +79,8 @@ export class ApiSessionClient extends EventEmitter {
     private agentState: AgentState | null
     private agentStateVersion: number
     private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
-    private pendingMessages: UserMessage[] = []
-    private pendingMessageCallback: ((message: UserMessage) => void) | null = null
+    private pendingMessages: { message: UserMessage; localId?: string }[] = []
+    private pendingMessageCallback: ((message: UserMessage, localId?: string) => void) | null = null
     private lastSeenMessageSeq: number | null = null
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
@@ -82,7 +120,8 @@ export class ApiSessionClient extends EventEmitter {
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
             transports: ['websocket'],
-            autoConnect: false
+            autoConnect: false,
+            ...buildSocketIoExtraHeaderOptions()
         })
 
         this.terminalManager = new TerminalManager({
@@ -206,22 +245,23 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.connect()
     }
 
-    onUserMessage(callback: (data: UserMessage) => void): void {
+    onUserMessage(callback: (data: UserMessage, localId?: string) => void): void {
         this.pendingMessageCallback = callback
         while (this.pendingMessages.length > 0) {
-            callback(this.pendingMessages.shift()!)
+            const pending = this.pendingMessages.shift()!
+            callback(pending.message, pending.localId)
         }
     }
 
-    private enqueueUserMessage(message: UserMessage): void {
+    private enqueueUserMessage(message: UserMessage, localId?: string): void {
         if (this.pendingMessageCallback) {
-            this.pendingMessageCallback(message)
+            this.pendingMessageCallback(message, localId)
         } else {
-            this.pendingMessages.push(message)
+            this.pendingMessages.push({ message, localId })
         }
     }
 
-    private handleIncomingMessage(message: { seq?: number; content: unknown }): void {
+    private handleIncomingMessage(message: { seq?: number; localId?: string | null; content: unknown }): void {
         const seq = typeof message.seq === 'number' ? message.seq : null
         if (seq !== null) {
             if (this.lastSeenMessageSeq !== null && seq <= this.lastSeenMessageSeq) {
@@ -232,7 +272,7 @@ export class ApiSessionClient extends EventEmitter {
 
         const userResult = UserMessageSchema.safeParse(message.content)
         if (userResult.success) {
-            this.enqueueUserMessage(userResult.data)
+            this.enqueueUserMessage(userResult.data, message.localId ?? undefined)
             return
         }
 
@@ -272,10 +312,10 @@ export class ApiSessionClient extends EventEmitter {
                     `${configuration.apiUrl}/cli/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                     {
                         params: { afterSeq: cursor, limit },
-                        headers: {
+                        headers: buildHubRequestHeaders({
                             Authorization: `Bearer ${this.token}`,
                             'Content-Type': 'application/json'
-                        },
+                        }),
                         timeout: 15_000
                     }
                 )
@@ -328,7 +368,7 @@ export class ApiSessionClient extends EventEmitter {
     sendClaudeSessionMessage(body: RawJSONLines): void {
         let content: MessageContent
 
-        if (body.type === 'user' && typeof body.message.content === 'string' && body.isSidechain !== true && body.isMeta !== true) {
+        if (isExternalUserMessage(body)) {
             content = {
                 role: 'user',
                 content: {
@@ -391,11 +431,11 @@ export class ApiSessionClient extends EventEmitter {
         })
     }
 
-    sendCodexMessage(body: unknown): void {
+    sendAgentMessage(body: unknown): void {
         const content = {
             role: 'agent',
             content: {
-                type: 'codex',
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
                 data: body
             },
             meta: {
@@ -438,7 +478,13 @@ export class ApiSessionClient extends EventEmitter {
     keepAlive(
         thinking: boolean,
         mode: 'local' | 'remote',
-        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode }
+        runtime?: {
+            permissionMode?: SessionPermissionMode
+            model?: SessionModel
+            modelReasoningEffort?: string | null
+            effort?: string | null
+            collaborationMode?: SessionCollaborationMode
+        }
     ): void {
         this.socket.volatile.emit('session-alive', {
             sid: this.sessionId,
@@ -449,9 +495,14 @@ export class ApiSessionClient extends EventEmitter {
         })
     }
 
-    sendSessionDeath(): void {
+    emitMessagesConsumed(localIds: string[]): void {
+        if (localIds.length === 0) return
+        this.socket.emit('messages-consumed', { sid: this.sessionId, localIds })
+    }
+
+    sendSessionDeath(reason?: SessionEndReason): void {
         void cleanupUploadDir(this.sessionId)
-        this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() })
+        this.socket.emit('session-end', { sid: this.sessionId, time: Date.now(), reason })
     }
 
     updateMetadata(handler: (metadata: Metadata) => Metadata): void {

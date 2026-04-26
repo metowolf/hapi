@@ -1,7 +1,12 @@
-import { getPermissionModeLabel, getPermissionModeTone, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
+import {
+    getCodexCollaborationModeLabel,
+    getPermissionModeLabel,
+    getPermissionModeTone,
+    isPermissionModeAllowedForFlavor
+} from '@hapi/protocol'
 import type { PermissionModeTone } from '@hapi/protocol'
 import { useMemo } from 'react'
-import type { AgentState, ModelMode, PermissionMode } from '@/types/api'
+import type { AgentState, CodexCollaborationMode, PermissionMode } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import { useTranslation } from '@/lib/use-translation'
@@ -37,6 +42,7 @@ function getConnectionStatus(
     thinking: boolean,
     agentState: AgentState | null | undefined,
     voiceStatus: ConversationStatus | undefined,
+    backgroundTaskCount: number,
     t: (key: string) => string
 ): { text: string; color: string; dotColor: string; isPulsing: boolean } {
     const hasPermissions = agentState?.requests && Object.keys(agentState.requests).length > 0
@@ -79,6 +85,15 @@ function getConnectionStatus(
         }
     }
 
+    if (backgroundTaskCount > 0) {
+        return {
+            text: `${backgroundTaskCount} background task${backgroundTaskCount > 1 ? 's' : ''} running`,
+            color: 'text-[#007AFF]',
+            dotColor: 'bg-[#007AFF]',
+            isPulsing: true
+        }
+    }
+
     return {
         text: t('misc.online'),
         color: 'text-[#34C759]',
@@ -105,26 +120,28 @@ export function StatusBar(props: {
     active: boolean
     thinking: boolean
     agentState: AgentState | null | undefined
+    backgroundTaskCount?: number
     contextSize?: number
-    modelMode?: ModelMode
+    model?: string | null
     permissionMode?: PermissionMode
+    collaborationMode?: CodexCollaborationMode
     agentFlavor?: string | null
     voiceStatus?: ConversationStatus
 }) {
     const { t } = useTranslation()
     const connectionStatus = useMemo(
-        () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, t),
-        [props.active, props.thinking, props.agentState, props.voiceStatus, t]
+        () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
+        [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
     )
 
     const contextWarning = useMemo(
         () => {
             if (props.contextSize === undefined) return null
-            const maxContextSize = getContextBudgetTokens(props.modelMode)
+            const maxContextSize = getContextBudgetTokens(props.model, props.agentFlavor)
             if (!maxContextSize) return null
             return getContextWarning(props.contextSize, maxContextSize, t)
         },
-        [props.contextSize, props.modelMode, t]
+        [props.contextSize, props.model, props.agentFlavor, t]
     )
 
     const permissionMode = props.permissionMode
@@ -137,6 +154,12 @@ export function StatusBar(props: {
     const permissionModeLabel = displayPermissionMode ? getPermissionModeLabel(displayPermissionMode) : null
     const permissionModeTone = displayPermissionMode ? getPermissionModeTone(displayPermissionMode) : null
     const permissionModeColor = permissionModeTone ? PERMISSION_TONE_CLASSES[permissionModeTone] : 'text-[var(--app-hint)]'
+    const displayCollaborationMode = props.agentFlavor === 'codex' && props.collaborationMode === 'plan'
+        ? props.collaborationMode
+        : null
+    const collaborationModeLabel = displayCollaborationMode
+        ? getCodexCollaborationModeLabel(displayCollaborationMode)
+        : null
 
     return (
         <div className="flex items-center justify-between px-2 pb-1">
@@ -156,11 +179,18 @@ export function StatusBar(props: {
                 ) : null}
             </div>
 
-            {displayPermissionMode ? (
-                <span className={`text-xs ${permissionModeColor}`}>
-                    {permissionModeLabel}
-                </span>
-            ) : null}
+            <div className="flex items-center gap-2">
+                {collaborationModeLabel ? (
+                    <span className="text-xs text-blue-500">
+                        {collaborationModeLabel}
+                    </span>
+                ) : null}
+                {displayPermissionMode ? (
+                    <span className={`text-xs ${permissionModeColor}`}>
+                        {permissionModeLabel}
+                    </span>
+                ) : null}
+            </div>
         </div>
     )
 }

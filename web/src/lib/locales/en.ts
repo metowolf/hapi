@@ -46,7 +46,6 @@ export default {
   'session.item.path': 'path',
   'session.item.agent': 'agent',
   'session.item.model': 'model',
-  'session.item.modelMode': 'mode',
   'session.item.worktree': 'worktree',
   'session.item.pending': 'pending',
   'session.item.thinking': 'thinking',
@@ -91,6 +90,7 @@ export default {
   'button.paste': 'Paste',
 
   // New session form
+  'newSession.title': 'Create Session',
   'newSession.machine': 'Machine',
   'newSession.directory': 'Directory',
   'newSession.placeholder': '/path/to/project',
@@ -103,9 +103,12 @@ export default {
   'newSession.type.worktree.placeholder': 'feature-x (default 1228-xxxx)',
   'newSession.agent': 'Agent',
   'newSession.model': 'Model',
+  'newSession.effort': 'Effort',
   'newSession.model.optional': 'optional',
   'newSession.model.custom.placeholder': 'Enter Claude model name',
   'newSession.model.custom.required': 'Custom model is required',
+  'newSession.model.loadFailed': 'Failed to load Codex models',
+  'newSession.reasoningEffort': 'Reasoning effort',
   'newSession.yolo': 'YOLO mode',
   'newSession.yolo.title': 'Bypass approvals and sandbox',
   'newSession.yolo.desc': 'Uses dangerous agent flags when spawning.',
@@ -121,6 +124,11 @@ export default {
   'spawn.cancel': 'Cancel',
   'spawn.create': 'Create Session',
   'spawn.creating': 'Creating…',
+  'session.directoryMissingSimple': 'Directory does not exist. Creating the session will create it automatically.',
+  'session.directoryMissingSimpleConfirm': 'Directory does not exist. Click again to create it automatically.',
+  'session.directoryMissingWorktree': 'Worktree sessions require an existing repository directory.',
+  'session.codexModelsLoadFailed': 'Failed to load Codex models',
+  'session.createAndCreateDirectory': 'Create and make directory',
 
   // Machine
   'machine.unknown': 'Unknown platform',
@@ -139,6 +147,7 @@ export default {
   'terminal.commandArgs': 'Command args',
   'terminal.stdout': 'Stdout',
   'terminal.stderr': 'Stderr',
+  'terminal.unsupportedWindows': 'Remote terminal is unavailable on Windows hosts.',
   'terminal.paste.fallbackTitle': 'Paste input',
   'terminal.paste.fallbackDescription': 'Clipboard read is unavailable. Paste your text below.',
   'terminal.paste.placeholder': 'Paste terminal input here…',
@@ -204,6 +213,8 @@ export default {
   'composer.send': 'Send',
   'composer.stop': 'Stop',
   'composer.voice': 'Voice assistant',
+  'composer.codexSlashUnsupported.title': 'Codex command unavailable',
+  'composer.codexSlashUnsupported.body': 'HAPI remote mode does not yet run built-in Codex slash commands like {command}. Use natural language instead, or run it in the local Codex TUI.',
 
   // Voice assistant
   'voice.connecting': 'Connecting...',
@@ -227,6 +238,10 @@ export default {
   'syncing.title': 'Syncing…',
   'syncing.message': 'Your data is being synchronized.',
   'reconnecting.message': 'Reconnecting...',
+  'reconnecting.reason.error': 'stream error',
+  'reconnecting.reason.closed': 'stream closed',
+  'reconnecting.reason.heartbeatTimeout': 'heartbeat timeout',
+  'reconnecting.reason.visibilityRecovery': 'resuming after background',
 
   // Send blocked
   'send.blocked.title': 'Cannot send message',
@@ -247,7 +262,12 @@ export default {
   'settings.language.title': 'Language',
   'settings.language.label': 'Language',
   'settings.display.title': 'Display',
+  'settings.display.appearance': 'Appearance',
+  'settings.display.appearance.system': 'Follow System',
+  'settings.display.appearance.dark': 'Dark',
+  'settings.display.appearance.light': 'Light',
   'settings.display.fontSize': 'Font Size',
+  'settings.display.terminalFontSize': 'Terminal Font Size',
   'settings.voice.title': 'Voice Assistant',
   'settings.voice.language': 'Voice Language',
   'settings.voice.autoDetect': 'Auto-detect',
@@ -259,8 +279,11 @@ export default {
   // Misc
   'misc.noMachines': 'No machines available',
   'misc.machine': 'Machine',
+  'misc.collaborationMode': 'Collaboration Mode',
   'misc.permissionMode': 'Permission Mode',
   'misc.model': 'Model',
+  'misc.reasoningEffort': 'Reasoning Effort',
+  'misc.effort': 'Effort',
   'misc.loading': 'Loading…',
   'misc.loadOlder': 'Load older',
   'misc.newMessage': '{n} new message{s}',

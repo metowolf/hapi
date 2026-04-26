@@ -9,10 +9,11 @@ import { useServerUrl } from '@/hooks/useServerUrl'
 import { useSSE } from '@/hooks/useSSE'
 import { useSyncingState } from '@/hooks/useSyncingState'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
+import { useViewportHeight } from '@/hooks/useViewportHeight'
 import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
-import { fetchLatestMessages } from '@/lib/message-window-store'
+import { clearMessageWindow, fetchLatestMessages } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
@@ -57,6 +58,9 @@ function AppInner() {
         tg?.expand()
         initializeTheme()
     }, [])
+
+    // Track visual viewport height for mobile keyboard avoidance (see useViewportHeight.ts)
+    useViewportHeight()
 
     useEffect(() => {
         const preventDefault = (event: Event) => {
@@ -117,6 +121,7 @@ function AppInner() {
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
     const { isSyncing, startSync, endSync } = useSyncingState()
     const [sseDisconnected, setSseDisconnected] = useState(false)
+    const [sseDisconnectReason, setSseDisconnectReason] = useState<string | null>(null)
     const syncTokenRef = useRef(0)
     const isFirstConnectRef = useRef(true)
     const baseUrlRef = useRef(baseUrl)
@@ -181,6 +186,7 @@ function AppInner() {
     const handleSseConnect = useCallback(() => {
         // Clear disconnected state on successful connection
         setSseDisconnected(false)
+        setSseDisconnectReason(null)
 
         // Increment token to track this specific connection
         const token = ++syncTokenRef.current
@@ -215,14 +221,24 @@ function AppInner() {
             })
     }, [api, queryClient, selectedSessionId, startSync, endSync])
 
-    const handleSseDisconnect = useCallback(() => {
+    const handleSseDisconnect = useCallback((reason: string) => {
         // Only show reconnecting banner if we've already connected once
         if (!isFirstConnectRef.current) {
             setSseDisconnected(true)
+            setSseDisconnectReason(reason)
         }
     }, [])
 
-    const handleSseEvent = useCallback(() => {}, [])
+    const handleSseEvent = useCallback((event: SyncEvent) => {
+        if (event.type !== 'messages-invalidated') {
+            return
+        }
+        if (!api || event.sessionId !== selectedSessionId) {
+            return
+        }
+        clearMessageWindow(event.sessionId)
+        void fetchLatestMessages(api, event.sessionId)
+    }, [api, selectedSessionId])
     const handleToast = useCallback((event: ToastEvent) => {
         addToast({
             title: event.data.title,
@@ -338,10 +354,13 @@ function AppInner() {
         <AppContextProvider value={{ api, token, baseUrl }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
-                <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing} />
+                <ReconnectingBanner
+                    isReconnecting={sseDisconnected && !isSyncing}
+                    reason={sseDisconnectReason}
+                />
                 <VoiceErrorBanner />
                 <OfflineBanner />
-                <div className="h-full flex flex-col">
+                <div className="h-full min-h-0 flex flex-col">
                     <Outlet />
                 </div>
                 <ToastContainer />

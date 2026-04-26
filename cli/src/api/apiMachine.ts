@@ -10,10 +10,12 @@ import type { Update, UpdateMachineBody } from '@hapi/protocol'
 import type { RunnerState, Machine, MachineMetadata } from './types'
 import { RunnerStateSchema, MachineMetadataSchema } from './types'
 import { backoff } from '@/utils/time'
+import { getInvokedCwd } from '@/utils/invokedCwd'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import { buildSocketIoExtraHeaderOptions } from './hubExtraHeaders'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -77,7 +79,7 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         })
 
-        registerCommonHandlers(this.rpcHandlerManager, process.cwd())
+        registerCommonHandlers(this.rpcHandlerManager, getInvokedCwd())
 
         this.rpcHandlerManager.registerHandler<PathExistsRequest, PathExistsResponse>('path-exists', async (params) => {
             const rawPaths = Array.isArray(params?.paths) ? params.paths : []
@@ -101,7 +103,7 @@ export class ApiMachineClient {
 
     setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
-            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, isCustomModel, yolo, token, sessionType, worktreeName } = params || {}
+            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, isCustomModel, effort, modelReasoningEffort, yolo, permissionMode, token, sessionType, worktreeName } = params || {}
 
             if (!directory) {
                 throw new Error('Directory is required')
@@ -116,7 +118,10 @@ export class ApiMachineClient {
                 agent,
                 model,
                 isCustomModel,
+                effort,
+                modelReasoningEffort,
                 yolo,
+                permissionMode,
                 token,
                 sessionType,
                 worktreeName
@@ -128,7 +133,7 @@ export class ApiMachineClient {
                 case 'requestToApproveDirectoryCreation':
                     return { type: 'requestToApproveDirectoryCreation', directory: result.directory }
                 case 'error':
-                    throw new Error(result.errorMessage)
+                    return { type: 'error', errorMessage: result.errorMessage }
             }
         })
 
@@ -229,7 +234,8 @@ export class ApiMachineClient {
             path: '/socket.io/',
             reconnection: true,
             reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
+            reconnectionDelayMax: 5000,
+            ...buildSocketIoExtraHeaderOptions()
         })
 
         this.socket.on('connect', () => {

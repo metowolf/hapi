@@ -1,6 +1,7 @@
 import type {
     AttachmentMetadata,
     AuthResponse,
+    CodexCollaborationMode,
     DeleteUploadResponse,
     ListDirectoryResponse,
     FileReadResponse,
@@ -9,7 +10,7 @@ import type {
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
-    ModelMode,
+    CodexModelsResponse,
     PermissionMode,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
@@ -313,10 +314,31 @@ export class ApiClient {
         })
     }
 
-    async setModelMode(sessionId: string, model: ModelMode): Promise<void> {
+    async setCollaborationMode(sessionId: string, mode: CodexCollaborationMode): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/collaboration-mode`, {
+            method: 'POST',
+            body: JSON.stringify({ mode })
+        })
+    }
+
+    async setModel(sessionId: string, model: string | null): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/model`, {
             method: 'POST',
             body: JSON.stringify({ model })
+        })
+    }
+
+    async setModelReasoningEffort(sessionId: string, modelReasoningEffort: string | null): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/model-reasoning-effort`, {
+            method: 'POST',
+            body: JSON.stringify({ modelReasoningEffort })
+        })
+    }
+
+    async setEffort(sessionId: string, effort: string | null): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/effort`, {
+            method: 'POST',
+            body: JSON.stringify({ effort })
         })
     }
 
@@ -372,17 +394,31 @@ export class ApiClient {
     async spawnSession(
         machineId: string,
         directory: string,
-        agent?: 'claude' | 'codex' | 'gemini' | 'opencode',
+        agent?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode',
         model?: string,
         isCustomModel?: boolean,
+        modelReasoningEffort?: string,
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
-        worktreeName?: string
+        worktreeName?: string,
+        effort?: string
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, model, isCustomModel, yolo, sessionType, worktreeName })
+            body: JSON.stringify({ directory, agent, model, isCustomModel, modelReasoningEffort, yolo, sessionType, worktreeName, effort })
         })
+    }
+
+    async getMachineCodexModels(machineId: string): Promise<CodexModelsResponse> {
+        return await this.request<CodexModelsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/codex-models`
+        )
+    }
+
+    async getSessionCodexModels(sessionId: string): Promise<CodexModelsResponse> {
+        return await this.request<CodexModelsResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/codex-models`
+        )
     }
 
     async getSlashCommands(sessionId: string): Promise<SlashCommandsResponse> {

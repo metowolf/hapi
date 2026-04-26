@@ -2,7 +2,9 @@ import type { ToolViewComponent, ToolViewProps } from '@/components/ToolCard/vie
 import { isObject, safeStringify } from '@hapi/protocol'
 import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { ChecklistList, extractTodoChecklist } from '@/components/ToolCard/checklist'
 import { basename, resolveDisplayPath } from '@/utils/path'
+import { getInputStringAny } from '@/lib/toolInputUtils'
 
 function parseToolUseError(message: string): { isToolUseError: boolean; errorMessage: string | null } {
     const regex = /<tool_use_error>(.*?)<\/tool_use_error>/s
@@ -26,7 +28,7 @@ function extractTextFromContentBlock(block: unknown): string | null {
     return null
 }
 
-function extractTextFromResult(result: unknown, depth: number = 0): string | null {
+export function extractTextFromResult(result: unknown, depth: number = 0): string | null {
     if (depth > 2) return null
     if (result === null || result === undefined) return null
     if (typeof result === 'string') {
@@ -102,6 +104,12 @@ function parseCodexBashOutput(text: string): CodexBashOutput | null {
         wallTime: wallMatch ? wallMatch[1].trim() : null,
         output: outputMatch ? outputMatch[1] : text
     }
+}
+
+export function getMutationResultRenderMode(text: string, state: string): { mode: 'code' | 'auto'; language?: string } {
+    const isMultiline = text.split('\n').length > 3
+    const mode = state === 'error' || isMultiline ? 'code' as const : 'auto' as const
+    return { mode, language: mode === 'code' ? 'text' : undefined }
 }
 
 function looksLikeHtml(text: string): boolean {
@@ -393,10 +401,11 @@ const MutationResultView: ToolViewComponent = (props: ToolViewProps) => {
     const text = extractTextFromResult(result)
     if (typeof text === 'string' && text.trim().length > 0) {
         const className = state === 'error' ? 'text-red-600' : 'text-[var(--app-fg)]'
+        const { mode, language } = getMutationResultRenderMode(text, state)
         return (
             <>
                 <div className={`text-sm ${className}`}>
-                    {renderText(text, { mode: state === 'error' ? 'code' : 'auto' })}
+                    {renderText(text, { mode, language })}
                 </div>
                 <RawJsonDevOnly value={result} />
             </>
@@ -489,64 +498,80 @@ const CodexDiffResultView: ToolViewComponent = (props: ToolViewProps) => {
     )
 }
 
-type TodoItem = {
-    id?: string
-    content?: string
-    status?: 'pending' | 'in_progress' | 'completed'
-    priority?: 'high' | 'medium' | 'low'
-}
-
-function extractTodos(input: unknown, result: unknown): TodoItem[] {
-    const todosFromInput = isObject(input) && Array.isArray(input.todos)
-        ? input.todos.filter(isObject)
-        : []
-    if (todosFromInput.length > 0) {
-        return todosFromInput.map((t) => ({
-            id: typeof t.id === 'string' ? t.id : undefined,
-            content: typeof t.content === 'string' ? t.content : undefined,
-            status: t.status === 'pending' || t.status === 'in_progress' || t.status === 'completed' ? t.status : undefined,
-            priority: t.priority === 'high' || t.priority === 'medium' || t.priority === 'low' ? t.priority : undefined
-        }))
-    }
-
-    const newTodos = isObject(result) && Array.isArray(result.newTodos)
-        ? result.newTodos.filter(isObject)
-        : []
-    return newTodos.map((t) => ({
-        id: typeof t.id === 'string' ? t.id : undefined,
-        content: typeof t.content === 'string' ? t.content : undefined,
-        status: t.status === 'pending' || t.status === 'in_progress' || t.status === 'completed' ? t.status : undefined,
-        priority: t.priority === 'high' || t.priority === 'medium' || t.priority === 'low' ? t.priority : undefined
-    }))
-}
-
-function todoTone(todo: TodoItem): string {
-    if (todo.status === 'completed') return 'text-emerald-600 line-through'
-    if (todo.status === 'in_progress') return 'text-[var(--app-link)]'
-    return 'text-[var(--app-hint)]'
-}
-
-function todoIcon(todo: TodoItem): string {
-    if (todo.status === 'completed') return '☑'
-    return '☐'
-}
-
 const TodoWriteResultView: ToolViewComponent = (props: ToolViewProps) => {
-    const todos = extractTodos(props.block.tool.input, props.block.tool.result)
+    const todos = extractTodoChecklist(props.block.tool.input, props.block.tool.result)
     if (todos.length === 0) {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
     }
 
+    return <ChecklistList items={todos} />
+}
+
+const AgentResultView: ToolViewComponent = (props: ToolViewProps) => {
+    const { state, result } = props.block.tool
+
+    if (result === undefined || result === null) {
+        return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(state)}</div>
+    }
+
+    // For errors, show the error text
+    if (state === 'error') {
+        const text = extractTextFromResult(result)
+        return (
+            <div className="text-sm text-red-600">
+                {text?.trim() ? text : 'Agent failed'}
+            </div>
+        )
+    }
+
+    const text = extractTextFromResult(result)
+    if (!text) {
+        return <div className="text-sm text-[var(--app-hint)]">{state === 'completed' ? 'Done' : placeholderForState(state)}</div>
+    }
+
+    // Detect internal launch metadata. Check structurally first (result object
+    // may carry agentId/output_file keys), then fall back to a strict text
+    // pattern that is unlikely to appear in normal agent prose.
+    const isInternalMeta = isObject(result) && ('agentId' in result || 'output_file' in result)
+        || (text.startsWith('Async agent launched successfully.') && text.includes('agentId:'))
+
+    if (isInternalMeta) {
+        return <div className="text-sm text-[var(--app-hint)]">Agent launched</div>
+    }
+
     return (
-        <div className="flex flex-col gap-1">
-            {todos.map((todo, idx) => {
-                const text = todo.content?.trim() ? todo.content.trim() : '(empty)'
-                return (
-                    <div key={todo.id ?? String(idx)} className={`text-sm ${todoTone(todo)}`}>
-                        {todoIcon(todo)} {text}
-                    </div>
-                )
-            })}
+        <>
+            <MarkdownRenderer content={text} />
+            <RawJsonDevOnly value={result} />
+        </>
+    )
+}
+
+const SkillResultView: ToolViewComponent = (props: ToolViewProps) => {
+    const { state, result, input } = props.block.tool
+
+    if (result === undefined || result === null) {
+        if (state === 'completed') {
+            return <div className="text-sm text-[var(--app-hint)]">Skill loaded</div>
+        }
+        return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(state)}</div>
+    }
+
+    // For errors, show the error text
+    if (state === 'error') {
+        const text = extractTextFromResult(result)
+        return (
+            <div className="text-sm text-red-600">
+                {text?.trim() ? text : 'Failed to load skill'}
+            </div>
+        )
+    }
+
+    // For successful loads, show just the skill name
+    const skillName = getInputStringAny(input, ['skill'])
+    return (
+        <div className="text-sm text-[var(--app-hint)]">
+            {skillName ? `Skill "${skillName}" loaded` : 'Skill loaded'}
         </div>
     )
 }
@@ -611,6 +636,8 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     CodexReasoning: CodexReasoningResultView,
     CodexPatch: CodexPatchResultView,
     CodexDiff: CodexDiffResultView,
+    Skill: SkillResultView,
+    Agent: AgentResultView,
     AskUserQuestion: AskUserQuestionResultView,
     ExitPlanMode: MarkdownResultView,
     ask_user_question: AskUserQuestionResultView,

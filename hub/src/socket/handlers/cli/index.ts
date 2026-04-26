@@ -1,4 +1,4 @@
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredMachine, StoredSession } from '../../../store'
 import type { RpcRegistry } from '../../rpcRegistry'
 import type { SyncEvent } from '../../../sync/syncEngine'
@@ -16,7 +16,10 @@ type SessionAlivePayload = {
     thinking?: boolean
     mode?: 'local' | 'remote'
     permissionMode?: PermissionMode
-    modelMode?: ModelMode
+    model?: string | null
+    modelReasoningEffort?: string | null
+    effort?: string | null
+    collaborationMode?: CodexCollaborationMode
 }
 
 type SessionEndPayload = {
@@ -38,10 +41,12 @@ export type CliHandlersDeps = {
     onSessionEnd?: (payload: SessionEndPayload) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
+    onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
+    onSessionActivity?: (sessionId: string, updatedAt: number) => void
 }
 
 export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent } = deps
+    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent, onBackgroundTaskDelta, onSessionActivity } = deps
     const terminalNamespace = io.of('/terminal')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
@@ -100,7 +105,9 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
         emitAccessError,
         onSessionAlive,
         onSessionEnd,
-        onWebappEvent
+        onWebappEvent,
+        onBackgroundTaskDelta,
+        onSessionActivity
     })
     registerMachineHandlers(socket, {
         store,

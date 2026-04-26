@@ -1,4 +1,4 @@
-import type { AgentState } from '@/api/types';
+import type { AgentState, SessionPermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -11,6 +11,10 @@ import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { getInvokedCwd } from '@/utils/invokedCwd';
+import { PermissionModeSchema } from '@hapi/protocol/schemas';
+import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+import type { SessionEndReason } from '@hapi/protocol';
 
 function emitReadyIfIdle(props: {
     queueSize: () => number;
@@ -27,14 +31,16 @@ function emitReadyIfIdle(props: {
 export async function runAgentSession(opts: {
     agentType: string;
     startedBy?: 'runner' | 'terminal';
+    permissionMode?: SessionPermissionMode;
 }): Promise<void> {
+    const workingDirectory = getInvokedCwd();
     const initialState: AgentState = {
         controlledByUser: false
     };
-    const { session } = await bootstrapSession({
+    const { session, sessionInfo } = await bootstrapSession({
         flavor: opts.agentType,
         startedBy: opts.startedBy ?? 'terminal',
-        workingDirectory: process.cwd(),
+        workingDirectory,
         agentState: initialState
     });
 
@@ -45,15 +51,17 @@ export async function runAgentSession(opts: {
 
     const messageQueue = new MessageQueue2<Record<string, never>>(() => hashObject({}));
 
-    session.onUserMessage((message) => {
+    session.onUserMessage((message, localId) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, {});
+        messageQueue.push(formattedText, {}, localId);
     });
+
+    let currentPermissionMode: SessionPermissionMode = opts.permissionMode ?? sessionInfo.permissionMode ?? 'default';
 
     const backend: AgentBackend = AgentRegistry.create(opts.agentType);
     await backend.initialize();
 
-    const permissionAdapter = new PermissionAdapter(session, backend);
+    const permissionAdapter = new PermissionAdapter(session, backend, () => currentPermissionMode);
 
     const happyServer = await startHappyServer(session);
     const bridgeCommand = getHappyCliCommand(['mcp', '--url', happyServer.url]);
@@ -67,7 +75,7 @@ export async function runAgentSession(opts: {
     ];
 
     const agentSessionId = await backend.newSession({
-        cwd: process.cwd(),
+        cwd: workingDirectory,
         mcpServers
     });
 
@@ -75,9 +83,37 @@ export async function runAgentSession(opts: {
     let shouldExit = false;
     let waitAbortController: AbortController | null = null;
 
-    session.keepAlive(thinking, 'remote');
+    const syncKeepAlive = () => {
+        session.keepAlive(thinking, 'remote', {
+            permissionMode: currentPermissionMode
+        });
+    };
+
+    const resolvePermissionMode = (value: unknown): SessionPermissionMode => {
+        const parsed = PermissionModeSchema.safeParse(value);
+        if (!parsed.success || !isPermissionModeAllowedForFlavor(parsed.data, opts.agentType)) {
+            throw new Error('Invalid permission mode');
+        }
+        return parsed.data as SessionPermissionMode;
+    };
+
+    session.rpcHandlerManager.registerHandler('set-session-config', async (payload: unknown) => {
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Invalid session config payload');
+        }
+        const config = payload as { permissionMode?: unknown };
+
+        if (config.permissionMode !== undefined) {
+            currentPermissionMode = resolvePermissionMode(config.permissionMode);
+        }
+
+        syncKeepAlive();
+        return { applied: { permissionMode: currentPermissionMode } };
+    });
+
+    syncKeepAlive();
     const keepAliveInterval = setInterval(() => {
-        session.keepAlive(thinking, 'remote');
+        syncKeepAlive();
     }, 2000);
 
     const sendReady = () => {
@@ -89,7 +125,7 @@ export async function runAgentSession(opts: {
         await backend.cancelPrompt(agentSessionId);
         await permissionAdapter.cancelAll('User aborted');
         thinking = false;
-        session.keepAlive(thinking, 'remote');
+        syncKeepAlive();
         sendReady();
         if (waitAbortController) {
             waitAbortController.abort();
@@ -111,6 +147,7 @@ export async function runAgentSession(opts: {
 
     registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
 
+    let sessionEndReason: SessionEndReason = 'completed';
     try {
         while (!shouldExit) {
             waitAbortController = new AbortController();
@@ -129,13 +166,13 @@ export async function runAgentSession(opts: {
             }];
 
             thinking = true;
-            session.keepAlive(thinking, 'remote');
+            syncKeepAlive();
 
             try {
                 await backend.prompt(agentSessionId, promptContent, (message) => {
                     const converted = convertAgentMessage(message);
                     if (converted) {
-                        session.sendCodexMessage(converted);
+                        session.sendAgentMessage(converted);
                     }
                 });
             } catch (error) {
@@ -146,7 +183,7 @@ export async function runAgentSession(opts: {
                 });
             } finally {
                 thinking = false;
-                session.keepAlive(thinking, 'remote');
+                syncKeepAlive();
                 await permissionAdapter.cancelAll('Prompt finished');
                 emitReadyIfIdle({
                     queueSize: () => messageQueue.size(),
@@ -156,10 +193,16 @@ export async function runAgentSession(opts: {
                 });
             }
         }
+        if (shouldExit) {
+            sessionEndReason = 'terminated';
+        }
+    } catch (error) {
+        sessionEndReason = 'error';
+        throw error;
     } finally {
         clearInterval(keepAliveInterval);
         await permissionAdapter.cancelAll('Session ended');
-        session.sendSessionDeath();
+        session.sendSessionDeath(sessionEndReason);
         await session.flush();
         session.close();
         await backend.disconnect();

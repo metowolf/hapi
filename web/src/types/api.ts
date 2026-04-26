@@ -9,11 +9,15 @@ import type {
 export type {
     AgentState,
     AttachmentMetadata,
-    ModelMode,
+    CodexCollaborationMode,
     PermissionMode,
     Session,
     SessionSummary,
     SessionSummaryMetadata,
+    TeamMember,
+    TeamMessage,
+    TeamState,
+    TeamTask,
     TodoItem,
     WorktreeMetadata
 } from '@hapi/protocol/types'
@@ -31,11 +35,27 @@ export type SessionMetadataSummary = {
     worktree?: WorktreeMetadata
 }
 
-export type MessageStatus = 'sending' | 'sent' | 'failed'
+export type MessageStatus = 'queued' | 'sending' | 'sent' | 'failed'
 
 export type DecryptedMessage = ProtocolDecryptedMessage & {
     status?: MessageStatus
     originalText?: string
+}
+
+export type RunnerState = {
+    status?: string
+    pid?: number
+    httpPort?: number
+    startedAt?: number
+    shutdownRequestedAt?: number
+    shutdownSource?: string
+    lastSpawnError?: {
+        message: string
+        pid?: number
+        exitCode?: number | null
+        signal?: string | null
+        at: number
+    } | null
 }
 
 export type Machine = {
@@ -47,6 +67,7 @@ export type Machine = {
         happyCliVersion: string
         displayName?: string
     } | null
+    runnerState?: RunnerState | null
 }
 
 export type AuthResponse = {
@@ -151,7 +172,7 @@ export type GitStatusFiles = {
 export type SlashCommand = {
     name: string
     description?: string
-    source: 'builtin' | 'user' | 'plugin'
+    source: 'builtin' | 'user' | 'plugin' | 'project'
     content?: string  // Expanded content for Codex user prompts
     pluginName?: string
 }
@@ -170,6 +191,20 @@ export type SkillSummary = {
 export type SkillsResponse = {
     success: boolean
     skills?: SkillSummary[]
+    error?: string
+}
+
+export type CodexModelSummary = {
+    id: string
+    displayName: string
+    isDefault: boolean
+    defaultReasoningEffort?: string | null
+    supportedReasoningEfforts?: string[]
+}
+
+export type CodexModelsResponse = {
+    success: boolean
+    models?: CodexModelSummary[]
     error?: string
 }
 

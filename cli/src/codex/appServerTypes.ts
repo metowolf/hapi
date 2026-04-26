@@ -1,16 +1,46 @@
 export type ApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 
+export interface InitializeCapabilities {
+    experimentalApi: boolean;
+}
+
 export interface InitializeParams {
     clientInfo: {
         name: string;
         title?: string;
         version: string;
     };
+    capabilities: InitializeCapabilities | null;
 }
 
 export interface InitializeResponse {
     userAgent?: string;
+    [key: string]: unknown;
+}
+
+export interface ModelListParams {
+    includeHidden?: boolean;
+}
+
+export interface ModelListItem {
+    id: string;
+    model?: string;
+    displayName?: string;
+    description?: string;
+    hidden?: boolean;
+    supportedReasoningEfforts?: Array<{
+        reasoningEffort?: string;
+        description?: string;
+    }>;
+    defaultReasoningEffort?: string | null;
+    isDefault?: boolean;
+    [key: string]: unknown;
+}
+
+export interface ModelListResponse {
+    data?: ModelListItem[];
+    nextCursor?: string | null;
     [key: string]: unknown;
 }
 
@@ -32,6 +62,7 @@ export interface ThreadStartResponse {
     thread: {
         id: string;
     };
+    model: string;
     [key: string]: unknown;
 }
 
@@ -56,6 +87,7 @@ export interface ThreadResumeResponse {
     thread: {
         id: string;
     };
+    model: string;
     [key: string]: unknown;
 }
 
@@ -94,12 +126,16 @@ export type SandboxPolicy =
         excludeSlashTmp?: boolean;
     };
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'auto';
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ReasoningSummary = 'auto' | 'none' | 'brief' | 'detailed';
 
 export type CollaborationMode = {
-    mode: 'plan' | 'code' | 'pair_programming' | 'execute' | 'custom' | (string & {});
-    settings?: Record<string, unknown>;
+    mode: 'plan' | 'default';
+    settings: {
+        model: string;
+        reasoning_effort?: ReasoningEffort | null;
+        developer_instructions?: string | null;
+    };
 };
 
 export interface TurnStartParams {

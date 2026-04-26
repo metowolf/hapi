@@ -1,5 +1,6 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
-import { asNumber, asString, isObject } from '@hapi/protocol'
+import { AGENT_MESSAGE_PAYLOAD_TYPE, asNumber, asString, isObject } from '@hapi/protocol'
+import { isClaudeChatVisibleMessage } from '@hapi/protocol/messages'
 
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
@@ -115,19 +116,67 @@ function normalizeUserOutput(
             createdAt,
             role: 'agent',
             isSidechain: true,
-            content: [{ type: 'sidechain', uuid, prompt: messageContent }]
+            content: [{ type: 'sidechain', uuid, parentUUID, prompt: messageContent }]
         }
     }
 
+    // Handle system-injected messages that arrive as type:'user' through
+    // the agent output path. Real user text goes through normalizeUserRecord.
+    //
+    // All string-content user messages here are system-injected (subagent
+    // prompts, task notifications, system reminders, etc.).  Always emit as
+    // sidechain so the uuid/parentUUID chain is preserved — the reducer uses
+    // sidechain UUIDs to identify sentinel auto-replies.  Task-notification
+    // summaries are extracted as events by the reducer, not here.
     if (typeof messageContent === 'string') {
         return {
             id: messageId,
             localId,
             createdAt,
-            role: 'user',
-            isSidechain: false,
-            content: { type: 'text', text: messageContent },
-            meta
+            role: 'agent',
+            isSidechain: true,
+            content: [{ type: 'sidechain', uuid, parentUUID, prompt: messageContent }]
+        }
+    }
+
+    // Sidechain user messages with array content (e.g. subagent prompts
+    // that Claude Code serialised as [{type:'text', text:'...'}] instead
+    // of a plain string).  Extract the text and treat as sidechain so the
+    // tracer can match it to the parent Task tool call.
+    if (isSidechain && Array.isArray(messageContent)) {
+        const textParts = messageContent
+            .filter((b: unknown) => isObject(b) && b.type === 'text' && typeof b.text === 'string')
+            .map((b: Record<string, unknown>) => b.text as string)
+        if (textParts.length > 0) {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: true,
+                content: [{ type: 'sidechain', uuid, parentUUID, prompt: textParts.join('\n\n') }]
+            }
+        }
+    }
+
+    // Non-sidechain array content that is all text blocks — these are real
+    // user messages that the CLI wrapped as agent output because
+    // isExternalUserMessage rejects array content. Emit as role:'user' so
+    // they display in the user lane.
+    if (!isSidechain && Array.isArray(messageContent)) {
+        const textParts = messageContent
+            .filter((b: unknown) => isObject(b) && b.type === 'text' && typeof b.text === 'string')
+            .map((b: Record<string, unknown>) => b.text as string)
+        if (textParts.length > 0 && textParts.length === messageContent.length) {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'user',
+                isSidechain: false,
+                content: { type: 'text', text: textParts.join('\n\n') },
+                meta
+            }
         }
     }
 
@@ -175,11 +224,12 @@ export function isSkippableAgentContent(content: unknown): boolean {
     if (!isObject(content) || content.type !== 'output') return false
     const data = isObject(content.data) ? content.data : null
     if (!data) return false
-    return Boolean(data.isMeta) || Boolean(data.isCompactSummary)
+    if (Boolean(data.isMeta) || Boolean(data.isCompactSummary)) return true
+    return !isClaudeChatVisibleMessage({ type: data.type, subtype: data.subtype })
 }
 
 export function isCodexContent(content: unknown): boolean {
-    return isObject(content) && content.type === 'codex'
+    return isObject(content) && content.type === AGENT_MESSAGE_PAYLOAD_TYPE
 }
 
 export function normalizeAgentRecord(
@@ -198,6 +248,7 @@ export function normalizeAgentRecord(
         // Skip meta/compact-summary messages (parity with hapi-app)
         if (data.isMeta) return null
         if (data.isCompactSummary) return null
+        if (!isClaudeChatVisibleMessage({ type: data.type, subtype: data.subtype })) return null
 
         if (data.type === 'assistant') {
             return normalizeAssistantOutput(messageId, localId, createdAt, data, meta)
@@ -296,7 +347,7 @@ export function normalizeAgentRecord(
         }
     }
 
-    if (content.type === 'codex') {
+    if (content.type === AGENT_MESSAGE_PAYLOAD_TYPE) {
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 

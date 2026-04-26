@@ -6,9 +6,11 @@ import { requireMachine } from './guards'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional(),
+    agent: z.enum(['claude', 'codex', 'cursor', 'gemini', 'opencode']).optional(),
     model: z.string().optional(),
     isCustomModel: z.boolean().optional(),
+    effort: z.string().optional(),
+    modelReasoningEffort: z.string().optional(),
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional()
@@ -56,9 +58,12 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             parsed.data.agent,
             parsed.data.model,
             parsed.data.isCustomModel,
+            parsed.data.modelReasoningEffort,
             parsed.data.yolo,
             parsed.data.sessionType,
-            parsed.data.worktreeName
+            parsed.data.worktreeName,
+            undefined,
+            parsed.data.effort
         )
         return c.json(result)
     })
@@ -91,6 +96,29 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ exists })
         } catch (error) {
             return c.json({ error: error instanceof Error ? error.message : 'Failed to check paths' }, 500)
+        }
+    })
+
+    app.get('/machines/:id/codex-models', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ success: false, error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        try {
+            const result = await engine.listCodexModelsForMachine(machineId)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list Codex models'
+            }, 500)
         }
     })
 

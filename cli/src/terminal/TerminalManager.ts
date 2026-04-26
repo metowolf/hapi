@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger'
+import { getInvokedCwd } from '@/utils/invokedCwd'
 import type {
     TerminalErrorPayload,
     TerminalExitPayload,
@@ -67,6 +68,15 @@ function buildFilteredEnv(): NodeJS.ProcessEnv {
         }
         env[key] = value
     }
+    if (!env.TERM) {
+        env.TERM = 'xterm-256color'
+    }
+    if (!env.COLORTERM) {
+        env.COLORTERM = 'truecolor'
+    }
+    if (!env.LANG) {
+        env.LANG = process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8'
+    }
     return env
 }
 
@@ -96,7 +106,7 @@ export class TerminalManager {
 
     create(terminalId: string, cols: number, rows: number): void {
         if (process.platform === 'win32') {
-            this.emitError(terminalId, 'Terminal is not supported on Windows.')
+            this.emitError(terminalId, 'Remote terminal is not supported on Windows yet.')
             return
         }
 
@@ -120,7 +130,7 @@ export class TerminalManager {
             return
         }
 
-        const sessionPath = this.getSessionPath() ?? process.cwd()
+        const sessionPath = this.getSessionPath() ?? getInvokedCwd()
         const shell = resolveShell()
         const decoder = new TextDecoder()
 

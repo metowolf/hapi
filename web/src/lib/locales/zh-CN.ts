@@ -46,7 +46,6 @@ export default {
   'session.item.path': '路径',
   'session.item.agent': '代理',
   'session.item.model': '模型',
-  'session.item.modelMode': '模型',
   'session.item.worktree': '工作树',
   'session.item.pending': '待处理',
   'session.item.thinking': '思考中',
@@ -93,6 +92,7 @@ export default {
   'button.paste': '粘贴',
 
   // New session form
+  'newSession.title': '创建会话',
   'newSession.machine': '机器',
   'newSession.directory': '目录',
   'newSession.placeholder': '/path/to/project',
@@ -105,9 +105,12 @@ export default {
   'newSession.type.worktree.placeholder': 'feature-x (默认 1228-xxxx)',
   'newSession.agent': '代理',
   'newSession.model': '模型',
+  'newSession.effort': '思考强度',
   'newSession.model.optional': '可选',
   'newSession.model.custom.placeholder': '输入 Claude 模型名称',
   'newSession.model.custom.required': '请输入自定义模型名称',
+  'newSession.model.loadFailed': '加载 Codex 模型失败',
+  'newSession.reasoningEffort': '推理强度',
   'newSession.yolo': 'YOLO 模式',
   'newSession.yolo.title': '跳过审批和沙箱',
   'newSession.yolo.desc': '启动时使用危险的代理标志。',
@@ -123,6 +126,11 @@ export default {
   'spawn.cancel': '取消',
   'spawn.create': '创建会话',
   'spawn.creating': '创建中…',
+  'session.directoryMissingSimple': '目录不存在，创建会话时将自动创建。',
+  'session.directoryMissingSimpleConfirm': '目录不存在。再次点击按钮将自动新建该目录。',
+  'session.directoryMissingWorktree': 'worktree 需要已存在的仓库目录。',
+  'session.codexModelsLoadFailed': '加载 Codex 模型失败',
+  'session.createAndCreateDirectory': '创建并新建目录',
 
   // Machine
   'machine.unknown': '未知平台',
@@ -141,6 +149,7 @@ export default {
   'terminal.commandArgs': '命令参数',
   'terminal.stdout': '标准输出',
   'terminal.stderr': '标准错误',
+  'terminal.unsupportedWindows': 'Windows 主机暂不支持远程终端。',
   'terminal.paste.fallbackTitle': '粘贴输入',
   'terminal.paste.fallbackDescription': '无法读取剪贴板，请在下方粘贴文本。',
   'terminal.paste.placeholder': '在此粘贴终端输入…',
@@ -206,6 +215,8 @@ export default {
   'composer.send': '发送',
   'composer.stop': '停止',
   'composer.voice': '语音助手',
+  'composer.codexSlashUnsupported.title': '无法执行 Codex 命令',
+  'composer.codexSlashUnsupported.body': 'HAPI 远程模式暂不支持 {command} 这类 Codex 内建 slash command，请改用自然语言，或在本地 Codex TUI 中执行。',
 
   // Voice assistant
   'voice.connecting': '连接中...',
@@ -229,6 +240,10 @@ export default {
   'syncing.title': '同步中…',
   'syncing.message': '正在同步您的数据。',
   'reconnecting.message': '正在重新连接...',
+  'reconnecting.reason.error': '流连接错误',
+  'reconnecting.reason.closed': '流连接已关闭',
+  'reconnecting.reason.heartbeatTimeout': '心跳超时',
+  'reconnecting.reason.visibilityRecovery': '后台恢复中',
 
   // Send blocked
   'send.blocked.title': '无法发送消息',
@@ -249,7 +264,12 @@ export default {
   'settings.language.title': '语言',
   'settings.language.label': '语言',
   'settings.display.title': '显示',
+  'settings.display.appearance': '外观',
+  'settings.display.appearance.system': '跟随系统',
+  'settings.display.appearance.dark': '深色',
+  'settings.display.appearance.light': '浅色',
   'settings.display.fontSize': '字体大小',
+  'settings.display.terminalFontSize': '终端字体大小',
   'settings.voice.title': '语音助手',
   'settings.voice.language': '语音语言',
   'settings.voice.autoDetect': '自动检测',
@@ -261,8 +281,11 @@ export default {
   // Misc
   'misc.noMachines': '无可用机器',
   'misc.machine': '机器',
+  'misc.collaborationMode': '协作模式',
   'misc.permissionMode': '权限模式',
   'misc.model': '模型',
+  'misc.reasoningEffort': '推理强度',
+  'misc.effort': '思考强度',
   'misc.loading': '加载中…',
   'misc.loadOlder': '加载更早的',
   'misc.newMessage': '{n} 条新消息',
