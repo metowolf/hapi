@@ -6,6 +6,21 @@ import { rpcError } from '../rpcResponses'
 
 const execFileAsync = promisify(execFile)
 
+const gitRepoCache = new Map<string, boolean>()
+
+async function isGitRepository(cwd: string): Promise<boolean> {
+    const cached = gitRepoCache.get(cwd)
+    if (cached !== undefined) return cached
+    try {
+        await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd, timeout: 5_000 })
+        gitRepoCache.set(cwd, true)
+        return true
+    } catch {
+        gitRepoCache.set(cwd, false)
+        return false
+    }
+}
+
 interface GitStatusRequest {
     cwd?: string
     timeout?: number
@@ -54,6 +69,10 @@ async function runGitCommand(
     cwd: string,
     timeout?: number
 ): Promise<GitCommandResponse> {
+    if (!await isGitRepository(cwd)) {
+        return { success: true, stdout: '', stderr: '', exitCode: 0 }
+    }
+
     try {
         const options: ExecFileOptions = {
             cwd,
