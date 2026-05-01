@@ -14,6 +14,7 @@ import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { writeRunnerState, RunnerLocallyPersistedState, readRunnerState, acquireRunnerLock, releaseRunnerLock } from '@/persistence';
 import { isProcessAlive, isWindows, killProcess, killProcessByChildProcess } from '@/utils/process';
 import { PERMISSION_MODES } from '@hapi/protocol/modes';
+import { CLAUDE_MODEL_PRESETS } from '@hapi/protocol';
 import { withRetry } from '@/utils/time';
 import { isRetryableConnectionError } from '@/utils/errorUtils';
 
@@ -25,7 +26,7 @@ import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { resolveWorkspaceRoot } from '@/utils/workspaceRoot';
 import { hashRunnerCliApiToken } from './runnerIdentity';
 
-const CLAUDE_BUILT_IN_MODEL_ALIASES = new Set(['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]']);
+const CLAUDE_BUILT_IN_MODEL_ALIASES = new Set<string>(CLAUDE_MODEL_PRESETS);
 
 export function shouldSetClaudeHaikuModelEnv(agent: string, model?: string): boolean {
   if (agent !== 'claude') {
