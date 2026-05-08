@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCompact, parseClear, parsePlan, parseSpecialCommand } from './specialCommands';
+import { parseCompact, parseClear, parsePlan, parseModel, parseSpecialCommand } from './specialCommands';
 
 describe('parseCompact', () => {
     it('should parse /compact command with argument', () => {
@@ -92,6 +92,33 @@ describe('parsePlan', () => {
     });
 });
 
+describe('parseModel', () => {
+    it('should parse /model without argument', () => {
+        const result = parseModel('/model');
+        expect(result).toEqual({ isModel: true, model: null });
+    });
+
+    it('should parse /model with a model name', () => {
+        const result = parseModel('/model claude-opus-4-7');
+        expect(result).toEqual({ isModel: true, model: 'claude-opus-4-7' });
+    });
+
+    it('should parse /model auto', () => {
+        const result = parseModel('/model auto');
+        expect(result).toEqual({ isModel: true, model: 'auto' });
+    });
+
+    it('should not parse /model with multiple arguments', () => {
+        const result = parseModel('/model foo bar');
+        expect(result.isModel).toBe(false);
+    });
+
+    it('should not parse partial matches', () => {
+        expect(parseModel('/modeler test').isModel).toBe(false);
+        expect(parseModel('please /model this').isModel).toBe(false);
+    });
+});
+
 describe('parseSpecialCommand', () => {
     it('should detect compact command', () => {
         const result = parseSpecialCommand('/compact optimize');
@@ -112,6 +139,18 @@ describe('parseSpecialCommand', () => {
         expect(result.prompt).toBe('帮我规划五一行程');
     });
 
+    it('should detect model command without argument', () => {
+        const result = parseSpecialCommand('/model');
+        expect(result.type).toBe('model');
+        expect(result.model).toBeNull();
+    });
+
+    it('should detect model command with a model name', () => {
+        const result = parseSpecialCommand('/model claude-sonnet-4-6');
+        expect(result.type).toBe('model');
+        expect(result.model).toBe('claude-sonnet-4-6');
+    });
+
     it('should return null for regular messages', () => {
         const result = parseSpecialCommand('hello world');
         expect(result.type).toBeNull();
@@ -123,11 +162,13 @@ describe('parseSpecialCommand', () => {
         expect(parseSpecialCommand('  /compact test  ').type).toBe('compact');
         expect(parseSpecialCommand('  /clear  ').type).toBe('clear');
         expect(parseSpecialCommand('  /plan test  ').type).toBe('plan');
-        
+        expect(parseSpecialCommand('  /model claude-opus-4-7  ').type).toBe('model');
+
         // Test partial matches should not trigger
         expect(parseSpecialCommand('some /compact text').type).toBeNull();
         expect(parseSpecialCommand('/compactor').type).toBeNull();
         expect(parseSpecialCommand('/clearing').type).toBeNull();
         expect(parseSpecialCommand('/planner').type).toBeNull();
+        expect(parseSpecialCommand('/modeler').type).toBeNull();
     });
 });
