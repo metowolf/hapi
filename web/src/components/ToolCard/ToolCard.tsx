@@ -22,6 +22,7 @@ import { getInputString, getInputStringAny, truncate } from '@/lib/toolInputUtil
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
 import { TraceSection } from '@/components/ToolCard/trace'
+import { isSubagentToolName } from '@/chat/subagentTool'
 
 const ELAPSED_INTERVAL_MS = 1000
 
@@ -30,13 +31,14 @@ function ElapsedView(props: { from: number; active: boolean }) {
 
     useEffect(() => {
         if (!props.active) return
+        setNow(Date.now())
         const id = setInterval(() => setNow(Date.now()), ELAPSED_INTERVAL_MS)
         return () => clearInterval(id)
-    }, [props.active])
+    }, [props.active, props.from])
 
     if (!props.active) return null
 
-    const elapsed = (now - props.from) / 1000
+    const elapsed = Math.max(0, now - props.from) / 1000
     if (!Number.isFinite(elapsed)) return null
 
     return (
@@ -47,7 +49,7 @@ function ElapsedView(props: { from: number; active: boolean }) {
 }
 
 function getTaskSummaryChildren(block: ToolCallBlock): { visible: ToolCallBlock[]; remaining: number } | null {
-    if (block.tool.name !== 'Task') return null
+    if (!isSubagentToolName(block.tool.name)) return null
 
     const children = block.children
         .filter((child): child is ToolCallBlock => child.kind === 'tool-call')
@@ -59,7 +61,11 @@ function getTaskSummaryChildren(block: ToolCallBlock): { visible: ToolCallBlock[
     return { visible, remaining: children.length - visible.length }
 }
 
-function renderTaskSummary(block: ToolCallBlock, metadata: SessionMetadataSummary | null): ReactNode | null {
+function renderTaskSummary(
+    block: ToolCallBlock,
+    metadata: SessionMetadataSummary | null,
+    t: (key: string, params?: Record<string, string | number>) => string,
+): ReactNode | null {
     const summary = getTaskSummaryChildren(block)
     if (!summary) return null
 
@@ -76,7 +82,7 @@ function renderTaskSummary(block: ToolCallBlock, metadata: SessionMetadataSummar
                                 <TaskStateIcon state={child.tool.state} />
                             </span>
                             <span className="align-middle break-all">
-                                {formatTaskChildLabel(child, metadata)}
+                                {formatTaskChildLabel(child, metadata, t)}
                             </span>
                         </div>
                     </div>
@@ -116,10 +122,13 @@ function renderExitPlanModeInput(input: unknown): ReactNode | null {
 
 function renderToolInput(block: ToolCallBlock, surface: 'inline' | 'dialog' = 'inline'): ReactNode {
     const collapseLongContent = surface === 'inline'
+    const codeBlockSurfaceProps = surface === 'dialog'
+        ? { size: 'comfortable' as const, scrollY: true }
+        : {}
     const toolName = block.tool.name
     const input = block.tool.input
 
-    if (toolName === 'Task' && isObject(input) && typeof input.prompt === 'string') {
+    if (isSubagentToolName(toolName) && isObject(input) && typeof input.prompt === 'string') {
         return <MarkdownRenderer content={input.prompt} />
     }
 
@@ -171,14 +180,14 @@ function renderToolInput(block: ToolCallBlock, surface: 'inline' | 'dialog' = 'i
                     <div className="text-xs text-[var(--app-hint)] font-mono break-all">
                         {filePath}
                     </div>
-                    <CodeBlock code={content} language="text" collapseLongContent={collapseLongContent} />
+                    <CodeBlock code={content} language="text" title="Draft" collapseLongContent={collapseLongContent} {...codeBlockSurfaceProps} />
                 </div>
             )
         }
     }
 
     if (toolName === 'CodexDiff' && isObject(input) && typeof input.unified_diff === 'string') {
-        return <CodeBlock code={input.unified_diff} language="diff" collapseLongContent={collapseLongContent} />
+        return <CodeBlock code={input.unified_diff} language="diff" title="Patch" collapseLongContent={collapseLongContent} {...codeBlockSurfaceProps} />
     }
 
     if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {
@@ -192,11 +201,11 @@ function renderToolInput(block: ToolCallBlock, surface: 'inline' | 'dialog' = 'i
             ? commandArray.filter((part) => typeof part === 'string').join(' ')
             : getInputStringAny(input, ['command', 'cmd'])
         if (cmd) {
-            return <CodeBlock code={cmd} language="bash" collapseLongContent={collapseLongContent} />
+            return <CodeBlock code={cmd} language="bash" title="Command" collapseLongContent={collapseLongContent} {...codeBlockSurfaceProps} />
         }
     }
 
-    return <CodeBlock code={safeStringify(input)} language="json" collapseLongContent={collapseLongContent} />
+    return <CodeBlock code={safeStringify(input)} language="json" title="Input" collapseLongContent={collapseLongContent} {...codeBlockSurfaceProps} />
 }
 
 function StatusIcon(props: { state: ToolCallBlock['tool']['state'] }) {
@@ -265,21 +274,22 @@ function ToolCardInner(props: ToolCardProps) {
         childrenCount: props.block.children.length,
         description: props.block.tool.description,
         metadata: props.metadata
-    }), [
+    }, t), [
         props.block.tool.name,
         props.block.tool.input,
         props.block.tool.result,
         props.block.children.length,
         props.block.tool.description,
-        props.metadata
+        props.metadata,
+        t
     ])
 
     const toolName = props.block.tool.name
     const toolTitle = presentation.title
     const subtitle = presentation.subtitle ?? props.block.tool.description
-    const taskSummary = renderTaskSummary(props.block, props.metadata)
+    const taskSummary = renderTaskSummary(props.block, props.metadata, t)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
-    const showInline = !presentation.minimal && toolName !== 'Task'
+    const showInline = !presentation.minimal && !isSubagentToolName(toolName)
     const CompactToolView = showInline ? getToolViewComponent(toolName) : null
     const FullToolView = getToolFullViewComponent(toolName)
     const ResultToolView = getToolResultViewComponent(toolName)
@@ -287,6 +297,7 @@ function ToolCardInner(props: ToolCardProps) {
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
     const isRequestUserInput = isRequestUserInputToolName(toolName)
     const isQuestionTool = isAskUserQuestion || isRequestUserInput
+    const isCodexAgentCard = toolName === 'CodexAgent'
     const showsPermissionFooter = Boolean(permission && (
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
@@ -296,39 +307,48 @@ function ToolCardInner(props: ToolCardProps) {
     const { suppressFocusRing, onTriggerPointerDown, onTriggerKeyDown, onTriggerBlur } = usePointerFocusRing()
 
     const header = (
-        <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 flex flex-1 flex-col gap-1">
                 <div className="min-w-0 flex items-center gap-2">
-                    <div className="shrink-0 flex h-3.5 w-3.5 items-center justify-center text-[var(--app-hint)] leading-none">
+                    <div className="shrink-0 flex h-3.5 w-3.5 items-center justify-center text-[var(--app-tool-card-accent)] leading-none">
                         {presentation.icon}
                     </div>
-                    <CardTitle className="min-w-0 text-sm font-medium leading-tight break-words">
+                    <CardTitle className={cn(
+                        'min-w-0 text-sm font-medium leading-tight text-[var(--app-fg)]',
+                        isCodexAgentCard ? 'truncate whitespace-nowrap' : 'break-words'
+                    )}>
                         {toolTitle}
                     </CardTitle>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                    <ElapsedView from={runningFrom} active={props.block.tool.state === 'running'} />
-                    <span className={stateColor}>
-                        <StatusIcon state={props.block.tool.state} />
-                    </span>
-                    <span className="text-[var(--app-hint)]">
-                        <DetailsIcon />
-                    </span>
-                </div>
+                {subtitle ? (
+                    <CardDescription className={cn(
+                        'font-mono text-xs text-[var(--app-tool-card-subtitle)]',
+                        isCodexAgentCard ? 'truncate whitespace-nowrap' : 'break-all'
+                    )}>
+                        {truncate(subtitle, 160)}
+                    </CardDescription>
+                ) : null}
             </div>
 
-            {subtitle ? (
-                <CardDescription className="font-mono text-xs break-all opacity-80">
-                    {truncate(subtitle, 160)}
-                </CardDescription>
-            ) : null}
+            <div className={cn(
+                'flex shrink-0 items-center gap-2 self-center text-[var(--app-hint)]',
+                subtitle ? '-translate-y-0.5' : null
+            )}>
+                <ElapsedView from={runningFrom} active={props.block.tool.state === 'running'} />
+                <span className={stateColor}>
+                    <StatusIcon state={props.block.tool.state} />
+                </span>
+                <span className="text-[var(--app-hint)]">
+                    <DetailsIcon />
+                </span>
+            </div>
         </div>
     )
 
     return (
-        <Card className="overflow-hidden shadow-sm">
-            <CardHeader className="p-3 space-y-0">
+        <Card className="overflow-hidden rounded-[20px] bg-[var(--app-tool-card-bg)] shadow-none">
+            <CardHeader className={cn('space-y-0 p-3', subtitle ? 'pb-2' : null)}>
                 <Dialog>
                     <DialogTrigger asChild>
                         <button
@@ -380,7 +400,7 @@ function ToolCardInner(props: ToolCardProps) {
             </CardHeader>
 
             {hasBody ? (
-                <CardContent className="px-3 pb-3 pt-0">
+                <CardContent className="px-3 pb-3 pt-1">
                     {taskSummary ? (
                         <div className="mt-2">
                             {taskSummary}

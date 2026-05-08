@@ -67,7 +67,7 @@ export type Machine = {
         platform: string
         happyCliVersion: string
         displayName?: string
-        workspaceRoot?: string
+        workspaceRoots?: string[]
     } | null
     runnerState?: RunnerState | null
 }
@@ -222,6 +222,18 @@ export type CodexModelSummary = {
 export type CodexModelsResponse = {
     success: boolean
     models?: CodexModelSummary[]
+    error?: string
+}
+
+export type OpencodeModelSummary = {
+    modelId: string
+    name?: string
+}
+
+export type OpencodeModelsResponse = {
+    success: boolean
+    availableModels?: OpencodeModelSummary[]
+    currentModelId?: string | null
     error?: string
 }
 

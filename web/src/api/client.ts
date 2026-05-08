@@ -12,6 +12,7 @@ import type {
     MachinesResponse,
     MessagesResponse,
     CodexModelsResponse,
+    OpencodeModelsResponse,
     PermissionMode,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
@@ -24,6 +25,7 @@ import type {
     SessionResponse,
     SessionsResponse
 } from '@/types/api'
+import type { CancelMessageResponse } from '@hapi/protocol/schemas'
 
 type ApiClientOptions = {
     baseUrl?: string
@@ -306,6 +308,14 @@ export class ApiClient {
         })
     }
 
+    async cancelMessage(sessionId: string, messageId: string): Promise<CancelMessageResponse> {
+        const response = await this.request(
+            `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+            { method: 'DELETE' }
+        )
+        return response as CancelMessageResponse
+    }
+
     async abortSession(sessionId: string): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, {
             method: 'POST',
@@ -450,6 +460,18 @@ export class ApiClient {
     async getSessionCodexModels(sessionId: string): Promise<CodexModelsResponse> {
         return await this.request<CodexModelsResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/codex-models`
+        )
+    }
+
+    async getSessionOpencodeModels(sessionId: string): Promise<OpencodeModelsResponse> {
+        return await this.request<OpencodeModelsResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/opencode-models`
+        )
+    }
+
+    async getMachineOpencodeModelsForCwd(machineId: string, cwd: string): Promise<OpencodeModelsResponse> {
+        return await this.request<OpencodeModelsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/opencode-models?cwd=${encodeURIComponent(cwd)}`
         )
     }
 
