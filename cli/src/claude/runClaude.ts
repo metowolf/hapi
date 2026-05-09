@@ -317,6 +317,28 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             return;
         }
 
+        if (specialCommand.type === 'model') {
+            logger.debug('[start] Detected /model command');
+            if (specialCommand.model == null) {
+                // /model with no arg: show current model
+                const modelName = currentModel ?? 'auto';
+                session.sendSessionEvent({ type: 'message', message: `Claude model: ${modelName}` });
+            } else {
+                // /model <name> or /model auto: set model
+                const newModel = specialCommand.model === 'auto' ? null : specialCommand.model;
+                currentModel = normalizeClaudeSessionModel(newModel);
+                currentSessionRef.current?.setModel(currentModel);
+                currentSessionRef.current?.pushKeepAlive();
+                const modelName = currentModel ?? 'auto';
+                session.sendSessionEvent({ type: 'message', message: `Claude model set to ${modelName}` });
+                logger.debug(`[start] /model command: model changed to ${modelName}`);
+            }
+            if (localId) {
+                session.emitMessagesConsumed([localId]);
+            }
+            return;
+        }
+
         // Push with resolved permission mode, model, system prompts, and tools
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode ?? 'default',

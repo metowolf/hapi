@@ -17,11 +17,17 @@ export interface PlanCommandResult {
     prompt?: string;
 }
 
+export interface ModelCommandResult {
+    isModel: boolean;
+    model: string | null;
+}
+
 export interface SpecialCommandResult {
-    type: 'compact' | 'clear' | 'plan' | null;
+    type: 'compact' | 'clear' | 'plan' | 'model' | null;
     originalMessage?: string;
     mode?: 'plan' | 'default';
     prompt?: string;
+    model?: string | null;
 }
 
 /**
@@ -110,6 +116,22 @@ export function parsePlan(message: string): PlanCommandResult {
 }
 
 /**
+ * Parse /model command
+ * - /model: show current model
+ * - /model <name>: set model to <name>
+ * - /model auto: reset to default model
+ */
+export function parseModel(message: string): ModelCommandResult {
+    const trimmed = message.trim();
+    const match = /^\/model(?:\s+(\S+))?$/i.exec(trimmed);
+    if (!match) {
+        return { isModel: false, model: null };
+    }
+    const arg = match[1]?.trim() ?? null;
+    return { isModel: true, model: arg };
+}
+
+/**
  * Unified parser for special commands
  * Returns the type of command and original message if applicable
  */
@@ -121,7 +143,7 @@ export function parseSpecialCommand(message: string): SpecialCommandResult {
             originalMessage: compactResult.originalMessage
         };
     }
-    
+
     const clearResult = parseClear(message);
     if (clearResult.isClear) {
         return {
@@ -138,7 +160,15 @@ export function parseSpecialCommand(message: string): SpecialCommandResult {
             originalMessage: message.trim()
         };
     }
-    
+
+    const modelResult = parseModel(message);
+    if (modelResult.isModel) {
+        return {
+            type: 'model',
+            model: modelResult.model
+        };
+    }
+
     return {
         type: null
     };
