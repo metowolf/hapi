@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTheme } from '@/hooks/useTheme'
 import type { SessionSummary } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -499,15 +500,14 @@ function FlavorIcon({ flavor, className }: { flavor?: string | null; className?:
     const key = (flavor ?? 'claude').trim().toLowerCase()
     const slug = FLAVOR_SLUGS[key] ?? FLAVOR_SLUGS.claude
     const sizeClass = className ?? 'h-4 w-4'
+    const { isDark } = useTheme()
+    const theme = isDark ? 'dark' : 'light'
     return (
-        <picture className={`inline-flex shrink-0 ${sizeClass}`}>
-            <source media="(prefers-color-scheme: dark)" srcSet={`/flavors/dark/${slug}.png`} />
-            <img
-                aria-hidden="true"
-                src={`/flavors/light/${slug}.png`}
-                className={`${sizeClass} rounded-sm object-contain`}
-            />
-        </picture>
+        <img
+            aria-hidden="true"
+            src={`/flavors/${theme}/${slug}.png`}
+            className={`${sizeClass} rounded-sm object-contain shrink-0`}
+        />
     )
 }
 
