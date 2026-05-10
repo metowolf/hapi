@@ -487,38 +487,27 @@ function SessionListSearch(props: {
     )
 }
 
-const FLAVOR_BADGES: Record<string, { label: string; colors: string }> = {
-    claude: {
-        label: 'Cl',
-        colors: 'bg-[#d97706] text-white',
-    },
-    codex: {
-        label: 'Cx',
-        colors: 'bg-[#111827] text-white',
-    },
-    cursor: {
-        label: 'Cu',
-        colors: 'bg-[#0f766e] text-white',
-    },
-    gemini: {
-        label: 'Gm',
-        colors: 'bg-[#2563eb] text-white',
-    },
-    opencode: {
-        label: 'Op',
-        colors: 'bg-[#15803d] text-white',
-    },
+const FLAVOR_SLUGS: Record<string, string> = {
+    claude: 'claudecode-color',
+    codex: 'codex-color',
+    cursor: 'cursor',
+    gemini: 'geminicli-color',
+    opencode: 'opencode',
 }
 
 function FlavorIcon({ flavor, className }: { flavor?: string | null; className?: string }) {
-    const badge = FLAVOR_BADGES[(flavor ?? 'claude').trim().toLowerCase()] ?? FLAVOR_BADGES.claude
+    const key = (flavor ?? 'claude').trim().toLowerCase()
+    const slug = FLAVOR_SLUGS[key] ?? FLAVOR_SLUGS.claude
+    const sizeClass = className ?? 'h-4 w-4'
     return (
-        <span
-            aria-hidden="true"
-            className={`inline-flex items-center justify-center rounded-sm text-[8px] font-semibold leading-none ${badge.colors} ${className ?? 'h-4 w-4'}`}
-        >
-            {badge.label}
-        </span>
+        <picture className={`inline-flex shrink-0 ${sizeClass}`}>
+            <source media="(prefers-color-scheme: dark)" srcSet={`/flavors/dark/${slug}.png`} />
+            <img
+                aria-hidden="true"
+                src={`/flavors/light/${slug}.png`}
+                className={`${sizeClass} rounded-sm object-contain`}
+            />
+        </picture>
     )
 }
 
