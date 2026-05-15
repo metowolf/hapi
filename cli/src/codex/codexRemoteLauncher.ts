@@ -84,6 +84,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     private abortController: AbortController = new AbortController();
     private currentThreadId: string | null = null;
     private currentTurnId: string | null = null;
+    private readonly activeChildTurns = new Map<string, string>();
 
     constructor(session: CodexSession) {
         super(process.env.DEBUG ? session.logPath : undefined);
@@ -95,19 +96,50 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         return React.createElement(CodexDisplay, context);
     }
 
+    private async interruptActiveTurns(reason: string): Promise<void> {
+        const turnsToInterrupt = [
+            ...(this.currentThreadId && this.currentTurnId
+                ? [{ threadId: this.currentThreadId, turnId: this.currentTurnId, role: 'parent' as const }]
+                : []),
+            ...Array.from(this.activeChildTurns, ([threadId, turnId]) => ({
+                threadId,
+                turnId,
+                role: 'child' as const
+            }))
+        ];
+
+        if (turnsToInterrupt.length === 0) {
+            return;
+        }
+
+        const results = await Promise.allSettled(
+            turnsToInterrupt.map((target) => this.appServerClient.interruptTurn({
+                threadId: target.threadId,
+                turnId: target.turnId
+            }))
+        );
+
+        results.forEach((result, index) => {
+            const target = turnsToInterrupt[index];
+            if (result.status === 'fulfilled') {
+                if (target.role === 'child') {
+                    this.activeChildTurns.delete(target.threadId);
+                }
+                return;
+            }
+
+            logger.debug(
+                `[Codex] Error interrupting ${target.role} app-server turn ` +
+                `for ${reason}; threadId=${target.threadId} turnId=${target.turnId}:`,
+                result.reason
+            );
+        });
+    }
+
     private async handleAbort(): Promise<void> {
         logger.debug('[Codex] Abort requested - stopping current task');
         try {
-            if (this.currentThreadId && this.currentTurnId) {
-                try {
-                    await this.appServerClient.interruptTurn({
-                        threadId: this.currentThreadId,
-                        turnId: this.currentTurnId
-                    });
-                } catch (error) {
-                    logger.debug('[Codex] Error interrupting app-server turn:', error);
-                }
-            }
+            await this.interruptActiveTurns('abort');
             this.currentTurnId = null;
 
             this.abortController.abort();
@@ -187,6 +219,55 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         const asString = (value: unknown): string | null => {
             return typeof value === 'string' && value.length > 0 ? value : null;
+        };
+
+        const errorMessage = (error: unknown): string => {
+            return error instanceof Error ? error.message : String(error);
+        };
+
+        const isExitPlanModeTool = (toolName: string): boolean => {
+            return toolName === 'exit_plan_mode' || toolName === 'ExitPlanMode';
+        };
+
+        const shouldRetryWithoutCollaborationMode = (error: unknown): boolean => {
+            const message = errorMessage(error).toLowerCase();
+            const mentionsCollaborationMode = message.includes('collaborationmode')
+                || message.includes('collaboration_mode')
+                || message.includes('collaboration mode');
+            if (!mentionsCollaborationMode) {
+                return false;
+            }
+
+            return message.includes('requires experimentalapi')
+                || message.includes('unknown field')
+                || message.includes('unsupported')
+                || message.includes('unrecognized')
+                || message.includes('unexpected')
+                || message.includes('invalid field');
+        };
+
+        const responseContainsPlanCollaborationMode = (response: unknown): boolean => {
+            const record = asRecord(response);
+            const candidates = [
+                Array.isArray(response) ? response : undefined,
+                Array.isArray(record?.data) ? record.data : undefined
+            ];
+
+            for (const candidate of candidates) {
+                if (!candidate) continue;
+                for (const entry of candidate) {
+                    if (entry === 'plan') {
+                        return true;
+                    }
+                    const entryRecord = asRecord(entry);
+                    const mode = asString(entryRecord?.mode) ?? asString(entryRecord?.name);
+                    if (mode === 'plan') {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         };
 
         const applyResolvedModel = (value: unknown): string | undefined => {
@@ -397,6 +478,10 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     is_error: !approved,
                     id: randomUUID()
                 });
+                if (approved && isExitPlanModeTool(toolName)) {
+                    session.setCollaborationMode('default');
+                    logger.debug('[Codex] exit_plan_mode approved; collaborationMode reset to default');
+                }
             }
         });
         const reasoningProcessor = new ReasoningProcessor((message) => {
@@ -1635,6 +1720,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     `[Codex] Routing event from non-active thread into agent trace; ` +
                     `type=${msgType}, eventThreadId=${eventThreadId}, activeThread=${this.currentThreadId}`
                 );
+                if (msgType === 'task_started') {
+                    if (eventTurnId) {
+                        this.activeChildTurns.set(eventThreadId, eventTurnId);
+                    } else {
+                        logger.debug(`[Codex] Child task_started missing turn id; threadId=${eventThreadId}`);
+                    }
+                } else if (isTerminalEvent) {
+                    this.activeChildTurns.delete(eventThreadId);
+                }
                 handleChildCodexEvent(eventThreadId, msg);
                 return;
             }
@@ -2133,6 +2227,18 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 experimentalApi: true
             }
         });
+        let supportsTurnCollaborationMode = true;
+        let supportsPlanCollaborationMode = true;
+        try {
+            const response = await appServerClient.listCollaborationModes();
+            const hasPlanMode = responseContainsPlanCollaborationMode(response);
+            logger.debug(`[Codex] collaborationMode/list plan=${hasPlanMode}`);
+            if (!hasPlanMode) {
+                supportsPlanCollaborationMode = false;
+            }
+        } catch (error) {
+            logger.debug(`[Codex] collaborationMode/list failed: ${errorMessage(error)}`);
+        }
 
         let hasThread = false;
         let pending: QueuedMessage | null = null;
@@ -2176,17 +2282,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         };
 
         const interruptActiveTurn = async () => {
-            const threadId = this.currentThreadId;
-            const turnId = this.currentTurnId;
-            if (!threadId || !turnId) {
-                return;
-            }
-
-            try {
-                await appServerClient.interruptTurn({ threadId, turnId });
-            } catch (error) {
-                logger.debug('[Codex] Error interrupting app-server turn for slash command:', error);
-            }
+            await this.interruptActiveTurns('slash command');
         };
 
         const resumeExistingThreadForCompact = async (mode: EnhancedMode): Promise<string | null> => {
@@ -2384,21 +2480,55 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     }
                 }
 
-                const turnParams = buildTurnStartParams({
-                    threadId: this.currentThreadId,
-                    message: message.message,
-                    cwd: session.path,
-                    mode: {
-                        ...message.mode,
-                        model: session.getModel() ?? message.mode.model
-                    },
-                    cliOverrides: session.codexCliOverrides
-                });
                 turnInFlight = true;
                 allowAnonymousTerminalEvent = false;
-                const turnResponse = await appServerClient.startTurn(turnParams, {
-                    signal: this.abortController.signal
+                const mode = {
+                    ...message.mode,
+                    model: session.getModel() ?? message.mode.model
+                };
+                const shouldSendCollaborationMode = supportsTurnCollaborationMode
+                    && Boolean(mode.collaborationMode)
+                    && (mode.collaborationMode !== 'plan' || supportsPlanCollaborationMode);
+                const buildParams = (suppressCollaborationMode: boolean) => buildTurnStartParams({
+                    threadId: this.currentThreadId!,
+                    message: message.message,
+                    cwd: session.path,
+                    mode,
+                    cliOverrides: session.codexCliOverrides,
+                    overrides: suppressCollaborationMode
+                        ? { suppressCollaborationMode: true }
+                        : undefined
                 });
+                if (
+                    mode.collaborationMode === 'plan'
+                    && (!supportsTurnCollaborationMode || !supportsPlanCollaborationMode)
+                ) {
+                    session.sendSessionEvent({
+                        type: 'message',
+                        message: 'Plan mode is not supported by this Codex runtime. Sent as a normal turn instead.'
+                    });
+                }
+                let turnResponse: unknown;
+                try {
+                    turnResponse = await appServerClient.startTurn(buildParams(!shouldSendCollaborationMode), {
+                        signal: this.abortController.signal
+                    });
+                } catch (error) {
+                    if (shouldSendCollaborationMode && shouldRetryWithoutCollaborationMode(error)) {
+                        supportsTurnCollaborationMode = false;
+                        if (mode.collaborationMode === 'plan') {
+                            session.sendSessionEvent({
+                                type: 'message',
+                                message: 'Plan mode is not supported by this Codex runtime. Sent as a normal turn instead.'
+                            });
+                        }
+                        turnResponse = await appServerClient.startTurn(buildParams(true), {
+                            signal: this.abortController.signal
+                        });
+                    } else {
+                        throw error;
+                    }
+                }
                 const turnRecord = asRecord(turnResponse);
                 const turn = turnRecord ? asRecord(turnRecord.turn) : null;
                 const turnId = asString(turn?.id);
@@ -2475,6 +2605,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         this.permissionHandler = null;
         this.reasoningProcessor = null;
         this.diffProcessor = null;
+        this.activeChildTurns.clear();
 
         logger.debug('[codex-remote]: cleanup done');
     }
